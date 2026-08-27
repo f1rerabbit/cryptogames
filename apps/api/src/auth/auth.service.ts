@@ -50,8 +50,20 @@ export class AuthService {
       if (
         error instanceof Prisma.PrismaClientKnownRequestError &&
         error.code === "P2002"
-      )
+      ) {
+        const existing = await this.db.user.findUnique({
+          where: { email: normalized },
+          select: { id: true },
+        });
+        await this.audit.record({
+          ...(existing ? { actorId: existing.id, subjectId: existing.id } : {}),
+          action: "AUTH_REGISTER",
+          outcome: "DENIED",
+          reason: "DUPLICATE_ACCOUNT",
+          correlationId,
+        });
         throw new ConflictException("Account already exists");
+      }
       throw error;
     }
   }

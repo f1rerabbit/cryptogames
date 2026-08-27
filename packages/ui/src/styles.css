@@ -62,6 +62,9 @@ nav {
   margin: 2rem 0;
 }
 a {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
   color: var(--text);
   border: 1px solid var(--line);
   padding: 0.75rem 1rem;

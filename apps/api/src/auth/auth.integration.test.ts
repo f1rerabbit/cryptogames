@@ -1,10 +1,11 @@
-import { ValidationPipe, type INestApplication } from "@nestjs/common";
+import type { INestApplication } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import { RoleName } from "@cg/db";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import request from "supertest";
 import { AppModule } from "../app.module.js";
 import { DatabaseService } from "../database/database.service.js";
+import { configureApp } from "../configure-app.js";
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
 describe.skipIf(!databaseUrl)("persistent authentication HTTP workflow", () => {
@@ -16,14 +17,7 @@ describe.skipIf(!databaseUrl)("persistent authentication HTTP workflow", () => {
       imports: [AppModule],
     }).compile();
     app = module.createNestApplication();
-    app.setGlobalPrefix("v1");
-    app.useGlobalPipes(
-      new ValidationPipe({
-        whitelist: true,
-        forbidNonWhitelisted: true,
-        transform: true,
-      }),
-    );
+    configureApp(app, ["http://localhost:3000", "http://localhost:3002"]);
     await app.init();
     db = app.get(DatabaseService);
     await db.$executeRawUnsafe(
@@ -44,6 +38,11 @@ describe.skipIf(!databaseUrl)("persistent authentication HTTP workflow", () => {
       .post("/v1/auth/register")
       .send(credentials)
       .expect(201);
+    await request(app.getHttpServer())
+      .post("/v1/auth/register")
+      .set("x-correlation-id", "duplicate-registration")
+      .send(credentials)
+      .expect(409);
     const stored = await db.user.findUniqueOrThrow({
       where: { email: credentials.email },
     });
@@ -102,5 +101,40 @@ describe.skipIf(!databaseUrl)("persistent authentication HTTP workflow", () => {
     expect(
       await db.auditEvent.count({ where: { actorId: stored.id } }),
     ).toBeGreaterThanOrEqual(3);
+    expect(
+      await db.auditEvent.count({
+        where: {
+          actorId: stored.id,
+          action: "AUTH_REGISTER",
+          outcome: "DENIED",
+        },
+      }),
+    ).toBe(1);
+  });
+
+  it("returns correlated safe errors for unauthorized access and invalid login", async () => {
+    const unauthorized = await request(app.getHttpServer())
+      .get("/v1/me")
+      .set("x-correlation-id", "critic-unauthorized")
+      .expect(401);
+    expect(unauthorized.body as unknown).toEqual({
+      error: {
+        code: "REQUEST_REJECTED",
+        message: "Authentication required",
+        correlationId: "critic-unauthorized",
+      },
+    });
+    await request(app.getHttpServer())
+      .post("/v1/auth/login")
+      .send({
+        email: "player@example.invalid",
+        password: "wrong-password-value",
+      })
+      .expect(401);
+    expect(
+      await db.auditEvent.count({
+        where: { action: "AUTH_LOGIN", outcome: "DENIED" },
+      }),
+    ).toBe(1);
   });
 });

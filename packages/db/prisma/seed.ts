@@ -1,17 +1,19 @@
+import { pathToFileURL } from "node:url";
 import argon2 from "argon2";
 import { PrismaClient, RoleName } from "@prisma/client";
 import { assertSeedAllowed } from "../src/seed-policy.js";
-const db = new PrismaClient();
-async function main() {
-  assertSeedAllowed(process.env.NODE_ENV);
-  const password = process.env.DEMO_ACCOUNT_PASSWORD;
+
+type SeedEnvironment = NodeJS.ProcessEnv;
+export async function seedDatabase(db: PrismaClient, env: SeedEnvironment) {
+  assertSeedAllowed(env.NODE_ENV);
+  const password = env.DEMO_ACCOUNT_PASSWORD;
   if (!password || password.length < 12)
     throw new Error(
       "DEMO_ACCOUNT_PASSWORD must contain at least 12 characters",
     );
   await db.asset.upsert({
     where: { code: "TSC" },
-    update: {},
+    update: { name: "Test Satoshi Credit", scale: 0, withdrawable: false },
     create: {
       code: "TSC",
       name: "Test Satoshi Credit",
@@ -25,15 +27,13 @@ async function main() {
     ["DEMO_ADMIN_EMAIL", RoleName.ADMIN],
     ["DEMO_PLAYER_EMAIL", RoleName.PLAYER],
   ] as const) {
-    const email = process.env[emailKey];
+    const email = env[emailKey];
     if (!email) throw new Error(`${emailKey} is required`);
+    const passwordHash = await argon2.hash(password, { type: argon2.argon2id });
     const user = await db.user.upsert({
       where: { email },
-      update: {},
-      create: {
-        email,
-        passwordHash: await argon2.hash(password, { type: argon2.argon2id }),
-      },
+      update: { passwordHash },
+      create: { email, passwordHash },
     });
     const roleRow = await db.role.findUniqueOrThrow({ where: { name: role } });
     await db.userRole.upsert({
@@ -43,4 +43,15 @@ async function main() {
     });
   }
 }
-main().finally(() => db.$disconnect());
+
+async function main() {
+  const db = new PrismaClient();
+  try {
+    await seedDatabase(db, process.env);
+  } finally {
+    await db.$disconnect();
+  }
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
+  void main();

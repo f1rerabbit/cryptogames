@@ -1,0 +1,61 @@
+{
+  "round": 1,
+  "verdict": "BLOCKED",
+  "findings": [
+    {
+      "id": "M01-C-001",
+      "severity": "P0",
+      "surface": "PostgreSQL persistence",
+      "status": "closed-code-unverified",
+      "problem": "Prisma identifiers were String/text while the migration created UUID columns.",
+      "rootCause": "The hand-written migration and Prisma schema did not share native type annotations.",
+      "fix": "Added @db.Uuid to persisted identifiers, converted audit/compensation columns to UUID, and added a compensation foreign key.",
+      "regression": "packages/db/src/schema-contract.unit.test.ts",
+      "evidence": null
+    },
+    {
+      "id": "M01-C-002",
+      "severity": "P1",
+      "surface": "Critic browser infrastructure",
+      "status": "closed-code-unverified",
+      "problem": "Playwright used development servers and covered only 1440 and 390 widths.",
+      "rootCause": "The initial smoke configuration did not implement the critic evidence protocol.",
+      "fix": "Use production Next start commands after build, cover 1440/1024/768/390, and write round/viewport screenshots.",
+      "regression": "playwright.config.ts and e2e/surfaces.spec.ts",
+      "evidence": null
+    },
+    {
+      "id": "M01-C-003",
+      "severity": "P2",
+      "surface": "Player skeleton",
+      "status": "closed-code-unverified",
+      "problem": "Navigation exposed links to missing anchors and link targets could be below 44px.",
+      "rootCause": "Skeleton navigation was copied without matching sections or minimum target geometry.",
+      "fix": "Removed nonexistent destinations, enforced 44px link height, and test every hash target and target height.",
+      "regression": "e2e/surfaces.spec.ts",
+      "evidence": null
+    },
+    {
+      "id": "M01-C-004",
+      "severity": "P2",
+      "surface": "Registration and API errors",
+      "status": "closed-code-unverified",
+      "problem": "Duplicate registration was not audited and integration tests did not use production bootstrap filters/prefix.",
+      "rootCause": "Application setup was duplicated and the conflict path skipped audit.",
+      "fix": "Centralized configureApp, audited duplicate registration, and added correlated safe-error regression scenarios.",
+      "regression": "apps/api/src/auth/auth.integration.test.ts and apps/api/src/api.smoke.test.ts",
+      "evidence": null
+    },
+    {
+      "id": "M01-C-005",
+      "severity": "P2",
+      "surface": "Development seed",
+      "status": "closed-code-unverified",
+      "problem": "Rerunning seed with a new demo password left existing hashes unchanged.",
+      "rootCause": "User upsert had an empty update branch.",
+      "fix": "Seed now rotates password hashes and has a database integration regression test.",
+      "regression": "packages/db/src/seed.integration.test.ts",
+      "evidence": null
+    }
+  ]
+}

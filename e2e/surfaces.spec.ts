@@ -1,7 +1,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
 
-for (const surface of [
+const surfaces = [
   {
     name: "player",
     url: "http://127.0.0.1:3000",
@@ -12,21 +12,39 @@ for (const surface of [
     url: "http://127.0.0.1:3002",
     heading: "Панель администратора",
   },
-]) {
-  test(`${surface.name} skeleton is accessible and responsive`, async ({
-    page,
-  }, testInfo) => {
-    await page.goto(surface.url);
+] as const;
+
+for (const surface of surfaces) {
+  test(`${surface.name} critic evidence`, async ({ page }, testInfo) => {
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.goto(surface.url, { waitUntil: "networkidle" });
     await expect(page.getByRole("status")).toContainText(
       "DEMO • ТЕСТОВЫЕ СРЕДСТВА",
     );
     await expect(page.getByRole("heading", { level: 1 })).toHaveText(
       surface.heading,
     );
+    const overflow = await page.evaluate(
+      () =>
+        document.documentElement.scrollWidth -
+        document.documentElement.clientWidth,
+    );
+    expect(overflow).toBeLessThanOrEqual(0);
     const accessibility = await new AxeBuilder({ page }).analyze();
     expect(accessibility.violations).toEqual([]);
+    for (const link of await page.getByRole("link").all()) {
+      const box = await link.boundingBox();
+      expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);
+      const href = await link.getAttribute("href");
+      if (href?.startsWith("#"))
+        await expect(page.locator(href)).toHaveCount(1);
+    }
+    const transitionDuration = await page
+      .locator("main")
+      .evaluate((element) => getComputedStyle(element).transitionDuration);
+    expect(transitionDuration).toBe("0s");
     await page.screenshot({
-      path: testInfo.outputPath(`${surface.name}.png`),
+      path: `test-results/critic/round-1/${testInfo.project.name}/${surface.name}.png`,
       fullPage: true,
     });
   });

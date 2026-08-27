@@ -1,17 +1,166 @@
-generator client { provider = "prisma-client-js" }
-datasource db { provider = "postgresql" url = env("DATABASE_URL") }
-enum RoleName { PLAYER SUPPORT FINANCE RISK CONTENT ADMIN AUDITOR }
-enum AccountKind { TEST_FUNDS RESERVED BONUS SYSTEM }
-enum EntryDirection { DEBIT CREDIT }
-model User { id String @id @default(uuid()) email String @unique passwordHash String status String @default("ACTIVE") createdAt DateTime @default(now()) updatedAt DateTime @updatedAt roles UserRole[] sessions Session[] consents Consent[] accounts LedgerAccount[] }
-model Role { id String @id @default(uuid()) name RoleName @unique users UserRole[] }
-model UserRole { userId String roleId String user User @relation(fields:[userId],references:[id]) role Role @relation(fields:[roleId],references:[id]) @@id([userId,roleId]) }
-model Session { id String @id @default(uuid()) userId String tokenHash String @unique expiresAt DateTime revokedAt DateTime? createdAt DateTime @default(now()) user User @relation(fields:[userId],references:[id]) }
-model Consent { id String @id @default(uuid()) userId String documentType String documentVersion String documentHash String acceptedAt DateTime @default(now()) user User @relation(fields:[userId],references:[id]) @@unique([userId,documentType,documentVersion]) }
-model AuditEvent { id String @id @default(uuid()) actorId String? subjectId String? action String outcome String reason String? correlationId String metadata Json createdAt DateTime @default(now()) @@index([correlationId]) }
-model FeatureFlag { key String @id enabled Boolean @default(false) description String updatedAt DateTime @updatedAt }
-model Asset { code String @id name String scale Int @default(0) withdrawable Boolean @default(false) accounts LedgerAccount[] transactions LedgerTransaction[] }
-model LedgerAccount { id String @id @default(uuid()) userId String? assetCode String kind AccountKind allowNegative Boolean @default(false) createdAt DateTime @default(now()) user User? @relation(fields:[userId],references:[id]) asset Asset @relation(fields:[assetCode],references:[code]) entries LedgerEntry[] @@unique([userId,assetCode,kind]) }
-model LedgerTransaction { id String @id @default(uuid()) assetCode String type String referenceId String? compensatesId String? correlationId String createdAt DateTime @default(now()) asset Asset @relation(fields:[assetCode],references:[code]) entries LedgerEntry[] idempotency IdempotencyRecord? @@index([compensatesId]) }
-model LedgerEntry { id String @id @default(uuid()) transactionId String accountId String direction EntryDirection amount BigInt createdAt DateTime @default(now()) transaction LedgerTransaction @relation(fields:[transactionId],references:[id]) account LedgerAccount @relation(fields:[accountId],references:[id]) @@index([accountId,createdAt]) }
-model IdempotencyRecord { id String @id @default(uuid()) key String scope String requestHash String transactionId String @unique createdAt DateTime @default(now()) transaction LedgerTransaction @relation(fields:[transactionId],references:[id]) @@unique([scope,key]) }
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum RoleName {
+  PLAYER
+  SUPPORT
+  FINANCE
+  RISK
+  CONTENT
+  ADMIN
+  AUDITOR
+}
+
+enum AccountKind {
+  TEST_FUNDS
+  RESERVED
+  BONUS
+  SYSTEM
+}
+
+enum EntryDirection {
+  DEBIT
+  CREDIT
+}
+
+model User {
+  id           String          @id @default(uuid()) @db.Uuid
+  email        String          @unique
+  passwordHash String
+  status       String          @default("ACTIVE")
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+  roles        UserRole[]
+  sessions     Session[]
+  consents     Consent[]
+  accounts     LedgerAccount[]
+}
+
+model Role {
+  id    String     @id @default(uuid()) @db.Uuid
+  name  RoleName   @unique
+  users UserRole[]
+}
+
+model UserRole {
+  userId String @db.Uuid
+  roleId String @db.Uuid
+  user   User   @relation(fields: [userId], references: [id])
+  role   Role   @relation(fields: [roleId], references: [id])
+
+  @@id([userId, roleId])
+}
+
+model Session {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  tokenHash String    @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id])
+}
+
+model Consent {
+  id              String   @id @default(uuid()) @db.Uuid
+  userId          String   @db.Uuid
+  documentType    String
+  documentVersion String
+  documentHash    String
+  acceptedAt      DateTime @default(now())
+  user            User     @relation(fields: [userId], references: [id])
+
+  @@unique([userId, documentType, documentVersion])
+}
+
+model AuditEvent {
+  id            String   @id @default(uuid()) @db.Uuid
+  actorId       String?  @db.Uuid
+  subjectId     String?  @db.Uuid
+  action        String
+  outcome       String
+  reason        String?
+  correlationId String
+  metadata      Json
+  createdAt     DateTime @default(now())
+
+  @@index([correlationId])
+}
+
+model FeatureFlag {
+  key         String   @id
+  enabled     Boolean  @default(false)
+  description String
+  updatedAt   DateTime @updatedAt
+}
+
+model Asset {
+  code          String              @id
+  name          String
+  scale         Int                 @default(0)
+  withdrawable  Boolean             @default(false)
+  accounts      LedgerAccount[]
+  transactions  LedgerTransaction[]
+}
+
+model LedgerAccount {
+  id            String        @id @default(uuid()) @db.Uuid
+  userId        String?       @db.Uuid
+  assetCode     String
+  kind          AccountKind
+  allowNegative Boolean       @default(false)
+  createdAt     DateTime      @default(now())
+  user          User?         @relation(fields: [userId], references: [id])
+  asset         Asset         @relation(fields: [assetCode], references: [code])
+  entries       LedgerEntry[]
+
+  @@unique([userId, assetCode, kind])
+}
+
+model LedgerTransaction {
+  id             String              @id @default(uuid()) @db.Uuid
+  assetCode      String
+  type           String
+  referenceId    String?
+  compensatesId  String?             @db.Uuid
+  correlationId  String
+  createdAt      DateTime            @default(now())
+  asset          Asset               @relation(fields: [assetCode], references: [code])
+  entries        LedgerEntry[]
+  idempotency    IdempotencyRecord?
+  compensates    LedgerTransaction?  @relation("LedgerCompensation", fields: [compensatesId], references: [id])
+  compensatedBy  LedgerTransaction[] @relation("LedgerCompensation")
+
+  @@index([compensatesId])
+}
+
+model LedgerEntry {
+  id            String            @id @default(uuid()) @db.Uuid
+  transactionId String            @db.Uuid
+  accountId     String            @db.Uuid
+  direction     EntryDirection
+  amount        BigInt
+  createdAt     DateTime          @default(now())
+  transaction   LedgerTransaction @relation(fields: [transactionId], references: [id])
+  account       LedgerAccount     @relation(fields: [accountId], references: [id])
+
+  @@index([accountId, createdAt])
+}
+
+model IdempotencyRecord {
+  id            String            @id @default(uuid()) @db.Uuid
+  key           String
+  scope         String
+  requestHash   String
+  transactionId String            @unique @db.Uuid
+  createdAt     DateTime          @default(now())
+  transaction   LedgerTransaction @relation(fields: [transactionId], references: [id])
+
+  @@unique([scope, key])
+}

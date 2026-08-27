@@ -12,8 +12,6 @@ export default function Home() {
         </p>
         <nav aria-label="Основное меню">
           <a href="#catalog">Каталог</a>
-          <a href="#account">Аккаунт</a>
-          <a href="#support">Поддержка</a>
         </nav>
         <section id="catalog" className="card">
           <h2>DEMO-каталог</h2>
