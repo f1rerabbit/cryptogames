@@ -5,12 +5,12 @@ const surfaces = [
   {
     name: "player",
     url: "http://127.0.0.1:3000",
-    heading: "Игровое лобби готовится",
+    heading: "Играй без риска. Проверяй каждый ход.",
   },
   {
     name: "admin",
     url: "http://127.0.0.1:3002",
-    heading: "Панель администратора",
+    heading: "Demo operations",
   },
 ] as const;
 
@@ -53,15 +53,15 @@ for (const surface of surfaces) {
 test("player navigation is keyboard accessible", async ({ page }) => {
   await page.goto("http://127.0.0.1:3000");
   await page.keyboard.press("Tab");
-  await expect(page.getByRole("link", { name: "Каталог" })).toBeFocused();
-  await page.keyboard.press("Enter");
-  await expect(page).toHaveURL(/#catalog$/);
+  await expect(page.getByRole("link", { name: /CRYPTOGAMES/ })).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(page.getByRole("link", { name: "Игры" })).toBeFocused();
 });
 
 test("admin navigation is keyboard accessible", async ({ page }) => {
   await page.goto("http://127.0.0.1:3002");
   await page.keyboard.press("Tab");
-  await expect(page.getByRole("link", { name: "К статусу" })).toBeFocused();
-  await page.keyboard.press("Enter");
-  await expect(page).toHaveURL(/#status$/);
+  await expect(page.getByRole("link", { name: /CRYPTOGAMES/ })).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(page.getByRole("link", { name: "Игроки" })).toBeFocused();
 });

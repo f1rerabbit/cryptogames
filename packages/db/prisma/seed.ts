@@ -1,6 +1,6 @@
 import { pathToFileURL } from "node:url";
 import argon2 from "argon2";
-import { PrismaClient, RoleName } from "@prisma/client";
+import { AccountKind, PrismaClient, RoleName } from "@prisma/client";
 import { assertSeedAllowed } from "../src/seed-policy.js";
 
 type SeedEnvironment = NodeJS.ProcessEnv;
@@ -21,6 +21,23 @@ export async function seedDatabase(db: PrismaClient, env: SeedEnvironment) {
       withdrawable: false,
     },
   });
+  for (const kind of [
+    AccountKind.PLATFORM_TREASURY,
+    AccountKind.GAME_ESCROW,
+    AccountKind.TEST_FAUCET,
+  ]) {
+    const existing = await db.ledgerAccount.findFirst({
+      where: { userId: null, assetCode: "TSC", kind },
+    });
+    if (!existing)
+      await db.ledgerAccount.create({
+        data: {
+          assetCode: "TSC",
+          kind,
+          allowNegative: kind !== AccountKind.GAME_ESCROW,
+        },
+      });
+  }
   for (const name of Object.values(RoleName))
     await db.role.upsert({ where: { name }, update: {}, create: { name } });
   for (const [emailKey, role] of [
@@ -41,7 +58,50 @@ export async function seedDatabase(db: PrismaClient, env: SeedEnvironment) {
       update: {},
       create: { userId: user.id, roleId: roleRow.id },
     });
+    if (role === RoleName.PLAYER) {
+      await db.playerProfile.upsert({
+        where: { userId: user.id },
+        update: {},
+        create: { userId: user.id, displayName: "Demo Player" },
+      });
+      await db.ledgerAccount.upsert({
+        where: {
+          userId_assetCode_kind: {
+            userId: user.id,
+            assetCode: "TSC",
+            kind: AccountKind.PLAYER_AVAILABLE,
+          },
+        },
+        update: {},
+        create: {
+          userId: user.id,
+          assetCode: "TSC",
+          kind: AccountKind.PLAYER_AVAILABLE,
+        },
+      });
+    }
   }
+  for (const game of [
+    ["emerald-dice", "Emerald Dice", "Table", 100n, 10_000n],
+    ["coin-flip", "Coin Flip", "Instant", 100n, 5_000n],
+    ["aurora-crash", "Aurora Crash Demo", "Arcade", 250n, 20_000n],
+    ["midnight-mines", "Midnight Mines Demo", "Puzzle", 100n, 10_000n],
+    ["temple-reels", "Temple Reels Demo", "Reels", 50n, 5_000n],
+  ] as const)
+    await db.game.upsert({
+      where: { slug: game[0] },
+      update: {},
+      create: {
+        slug: game[0],
+        name: game[1],
+        provider: "CG Deterministic Simulator",
+        category: game[2],
+        description: "Server-authoritative deterministic demo lifecycle.",
+        minBet: game[3],
+        maxBet: game[4],
+        sortOrder: Number(game[3]),
+      },
+    });
 }
 
 async function main() {

@@ -6,7 +6,7 @@ import {
   UnauthorizedException,
 } from "@nestjs/common";
 import argon2 from "argon2";
-import { Prisma, RoleName } from "@cg/db";
+import { AccountKind, Prisma, RoleName } from "@cg/db";
 import type { Role } from "@cg/contracts";
 import { AuditService } from "../audit/audit.service.js";
 import { DatabaseService } from "../database/database.service.js";
@@ -31,6 +31,13 @@ export class AuthService {
             email: normalized,
             passwordHash,
             roles: { create: { roleId: role.id } },
+            profile: { create: {} },
+            accounts: {
+              create: {
+                assetCode: "TSC",
+                kind: AccountKind.PLAYER_AVAILABLE,
+              },
+            },
           },
           select: { id: true, email: true, createdAt: true },
         });
