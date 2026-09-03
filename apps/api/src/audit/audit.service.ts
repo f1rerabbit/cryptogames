@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Inject, Injectable } from "@nestjs/common";
 import { DatabaseService } from "../database/database.service.js";
 
 export type AuditInput = {
@@ -12,7 +12,7 @@ export type AuditInput = {
 };
 @Injectable()
 export class AuditService {
-  constructor(private readonly db: DatabaseService) {}
+  constructor(@Inject(DatabaseService) private readonly db: DatabaseService) {}
   async record(event: AuditInput) {
     await this.db.auditEvent.create({
       data: {
