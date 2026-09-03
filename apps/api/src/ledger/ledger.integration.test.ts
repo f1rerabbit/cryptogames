@@ -48,8 +48,8 @@ describe.skipIf(!databaseUrl)("PostgreSQL ledger integration", () => {
         },
       }),
     ]);
-    player = accounts[0]!.id;
-    system = accounts[1]!.id;
+    player = accounts[0].id;
+    system = accounts[1].id;
     await ledger.post({
       scope: "grant",
       idempotencyKey: randomUUID(),
