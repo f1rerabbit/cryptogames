@@ -145,7 +145,8 @@ describe.skipIf(!url)("MASTER-02 HTTP contracts", () => {
     const zero = await player
       .post(`/v1/game-sessions/${session.body.id}/wagers`)
       .send({ stake: "0", idempotencyKey: "http-wager-zero" })
-      .expect(400);
+      .expect(422);
+    expect(zero.body.error.code).toBe("BET_OUT_OF_RANGE");
     expect(zero.body.error.correlationId).toBeTruthy();
     const wager = await player
       .post(`/v1/game-sessions/${session.body.id}/wagers`)
