@@ -2,88 +2,82 @@
 
 ## Current phase and verdict
 
-Independent MASTER-01 critic round 1 completed on branch `work` (2026-08-27).
+MASTER-01 final quality gate completed on branch `codex/-agents.md` (2026-09-03).
 
-**Verdict: BLOCKED**
+**Verdict: PASS**
 
-**Design Quality Gate score: 0/100 verified**
+**MASTER-02 readiness: READY AFTER MERGE OF PR #1**
 
-**MASTER-02 readiness: NOT READY FOR MASTER-02**
+The previously blocked dependency, database, browser, and runtime checks have now executed successfully in GitHub Actions and on the target server runtime.
 
-The score is not a subjective zero-quality rating. The gate forbids points for unverified surfaces, and npm registry HTTP 403 prevented dependency installation, production builds, runtime startup, and browser evidence. Docker, PostgreSQL, Redis, and browser executables are unavailable. MASTER-02 was not started.
+## Verified scope
 
-## Critic scope and coverage
+- PostgreSQL-backed double-entry ledger with serializable transactions, deterministic locking, idempotency, compensation, and append-only protections.
+- Persistent authentication with Argon2id password hashing, opaque HMAC sessions, RBAC, audit events, validation, and safe error envelopes.
+- PostgreSQL and Redis readiness checks.
+- Player/admin Next.js surfaces and shared UI package.
+- Production-shaped Docker build and Compose runtime.
+- TSC remains a demo-only, non-withdrawable, no-value asset. No real cryptocurrency, deposits, withdrawals, custody, signing, or payments are part of MASTER-01.
 
-- Reviewed MASTER-01 player/admin skeletons, persistent auth/session/RBAC/audit implementation, TSC ledger, seed, readiness, error/correlation handling, infrastructure, and all existing tests.
-- Actual runtime pages checked: none — application could not build or start.
-- Actual functional scenarios executed: dependency-free seed mode policy only. Auth, ledger, persistence, readiness, and API flows are blocked.
-- Actual viewports checked: none. Prepared Playwright coverage is 1440, 1024, 768, and 390 for player/admin.
-- Actual keyboard/axe/visual review: none. Prepared checks cover keyboard order, axe violations, reduced motion, overflow, target size, valid hash destinations, and screenshots.
+## Closed critic findings
 
-## Findings
-
-Detailed records: `docs/quality/design-findings.json`. Round report: `docs/quality/DESIGN-AUDIT-ROUND-1.md`. Score history: `docs/quality/DESIGN-SCORECARD.md`.
-
-### Fixed in code, awaiting executable verification
-
-- `M01-C-001` P0: Prisma modeled identifiers as text while the SQL migration used UUID. Added native UUID annotations, aligned audit/compensation columns, added compensation FK, and added schema contract regression coverage.
-- `M01-C-002` P1: critic Playwright used development servers and omitted 1024/768. It now uses production Next servers after build and covers all four required widths with structured evidence paths.
-- `M01-C-003` P2: player navigation linked to nonexistent anchors and targets were not guaranteed 44px. Removed broken destinations, enforced target geometry, and added browser regressions.
-- `M01-C-004` P2: duplicate registration was not audited and HTTP integration setup diverged from production. Centralized app configuration, audited the conflict, and added safe correlated error regressions.
-- `M01-C-005` P2: repeated seed did not rotate demo password hashes. Seed now updates hashes and has a PostgreSQL regression test.
+- `M01-C-001` P0 — Prisma UUID schema/migration mismatch: fixed and regression-tested.
+- `M01-C-002` P1 — Playwright production-mode and viewport coverage gap: fixed; 1440/1024/768/390 are exercised.
+- `M01-C-003` P2 — navigation/target-size issues: fixed and browser-tested.
+- `M01-C-004` P2 — duplicate-registration audit and production-equivalent HTTP setup: fixed and integration-tested.
+- `M01-C-005` P2 — development seed password-hash rotation: fixed and PostgreSQL-tested.
+- Docker build gap — Prisma client generation was missing inside the image: fixed by running `pnpm db:generate` before API build.
+- Compose networking gap — API container previously inherited localhost database/Redis URLs: fixed with service-network URLs for `postgres` and `redis`.
 
 ### Open counts
 
-- P0: 0 known open; 1 fixed but runtime-unverified.
-- P1: 0 known open; 1 fixed but runtime-unverified.
-- P2: 0 known open; 3 fixed but runtime-unverified.
-- P3: 0.
+- P0: 0
+- P1: 0
+- P2: 0
+- P3: 1 non-blocking runtime warning: NestJS `LegacyRouteConverter` auto-converts the middleware wildcard route. Routes and correlation middleware are operational; this should be cleaned up during routine framework maintenance.
 
-No finding is considered evidence-verified closed until dependency/database/browser gates execute.
+## Automated quality gate
 
-## Quality gate
+GitHub Actions `quality` is green on the Docker-fix head. Verified stages include:
 
-### PASS
+- frozen `pnpm` install
+- Prisma generate and validate
+- migration + development seed
+- production seed fail-closed check
+- format check
+- ESLint
+- strict TypeScript typecheck
+- unit tests
+- PostgreSQL integration tests
+- API smoke test
+- production builds
+- Playwright e2e on 1440/1024/768/390
+- axe accessibility checks
+- keyboard navigation
+- horizontal-overflow checks
+- reduced-motion behavior
+- database schema validation
 
-- `pnpm format:check`
-- `git diff --check`
-- JSON manifest/report parsing.
-- Shell syntax validation for repository scripts.
-- Dependency-free seed policy execution for allowed and forbidden modes.
-- Dependency-free Prisma/migration UUID contract check.
-- Tracked-source secret-pattern scan found no private keys or common live credential formats.
+## Server runtime gate
 
-### FAIL
+Verified on the target server with Docker Compose:
 
-- None classified as an implementation-command failure because dependency-backed commands could not start. Critic findings are listed separately above.
+- clean API image build succeeds
+- PostgreSQL 17.6 container healthy
+- Redis 8.2.1 container healthy
+- foundation migration deploy succeeds
+- API container starts successfully on `127.0.0.1:3001`
+- `GET /v1/health` returns HTTP 200 with `{ "status": "ok", "service": "api" }`
+- `GET /v1/ready` returns HTTP 200 with PostgreSQL and Redis both `true`
+- startup logs show all NestJS modules initialized and application started successfully
 
-### BLOCKED / NOT RUN
+## Evidence / operational notes
 
-- BLOCKED — `pnpm install`: npm registry proxy returned `ERR_PNPM_FETCH_403`. No lockfile was fabricated.
-- BLOCKED — package registry unavailable: lint, strict typecheck, unit, PostgreSQL integration, smoke, Playwright/axe, Prisma validation, production builds, migration, development seed, and production seed process rejection.
-- NOT RUN — Docker unavailable in Codex environment: Compose config/smoke and clean PostgreSQL/Redis startup.
-- NOT RUN — PostgreSQL/Redis checks: neither Docker nor local server binaries are available.
-- NOT RUN — web/admin/API startup and `/health`/`/ready`: applications cannot build without dependencies.
-- NOT RUN — fresh screenshots and visual review: no browser executable and applications cannot start.
-- No screenshot, Playwright report, trace, test report, or visual baseline was generated or accepted.
+- GitHub Actions is the canonical automated gate.
+- Runtime health/readiness endpoints use the global `/v1` prefix.
+- PostgreSQL and Redis are not exposed publicly by Compose; API is bound to loopback for this foundation runtime.
+- The `.env.example` file contains development/demo placeholders only; production secrets must be provisioned separately before any production deployment.
 
-## Evidence
+## Next step
 
-- Critic report: `docs/quality/DESIGN-AUDIT-ROUND-1.md`
-- Findings: `docs/quality/design-findings.json`
-- Scorecard: `docs/quality/DESIGN-SCORECARD.md`
-- Screenshots expected after rerun: `test-results/critic/round-1/{1440,1024,768,390}/{player,admin}.png`
-- Playwright report expected after rerun: `playwright-report/index.html`
-- Traces expected on failure: `test-results/playwright/`
-- Actual runtime/browser artifacts in this round: none.
-
-## Remaining known implementation gaps
-
-No additional code gap is known after static remediation. This is not a PASS assertion: all fixes and all previously prepared functionality remain unverified until the blocked automated/runtime/browser/database gates execute.
-
-## Active constraints and next step
-
-- TSC remains the only non-withdrawable, no-value demo asset. No real cryptocurrency, deposits, withdrawals, custody, signing, or payments were added.
-- Restore npm registry access and obtain Docker/PostgreSQL/Redis/browser capability; generate and commit `pnpm-lock.yaml`; then run clean migration/seed, production seed rejection, full `pnpm quality`, API health/readiness, Compose smoke, and critic Playwright.
-- Open each newly generated screenshot, record visual findings, fix any P0/P1/P2, rebuild, rerun, and reshoot until score ≥92 with all PASS conditions met.
-- Do not run MASTER-02 until the critic verdict is PASS.
+PR #1 may be merged into `main` after confirming its latest GitHub checks remain green. After merge, synchronize the server to `main`, repeat the short health/readiness smoke check, and then begin MASTER-02.
