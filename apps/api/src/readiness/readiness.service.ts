@@ -1,10 +1,10 @@
-import { Injectable } from "@nestjs/common";
+import { Inject, Injectable } from "@nestjs/common";
 import { createClient } from "redis";
 import { DatabaseService } from "../database/database.service.js";
 
 @Injectable()
 export class ReadinessService {
-  constructor(private readonly db: DatabaseService) {}
+  constructor(@Inject(DatabaseService) private readonly db: DatabaseService) {}
   async check() {
     const checks = { postgres: false, redis: false };
     try {
