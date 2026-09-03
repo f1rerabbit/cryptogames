@@ -1,6 +1,7 @@
 import {
   CanActivate,
   ExecutionContext,
+  Inject,
   Injectable,
   SetMetadata,
   UnauthorizedException,
@@ -24,8 +25,8 @@ export type AuthenticatedUser = {
 @Injectable()
 export class SessionGuard implements CanActivate {
   constructor(
-    private readonly reflector: Reflector,
-    private readonly auth: AuthService,
+    @Inject(Reflector) private readonly reflector: Reflector,
+    @Inject(AuthService) private readonly auth: AuthService,
   ) {}
   async canActivate(context: ExecutionContext) {
     if (
@@ -51,7 +52,7 @@ export class SessionGuard implements CanActivate {
 
 @Injectable()
 export class RbacGuard implements CanActivate {
-  constructor(private readonly reflector: Reflector) {}
+  constructor(@Inject(Reflector) private readonly reflector: Reflector) {}
   canActivate(context: ExecutionContext) {
     if (
       this.reflector.getAllAndOverride<boolean>(IS_PUBLIC, [
