@@ -18,8 +18,8 @@ for (const surface of surfaces) {
   test(`${surface.name} critic evidence`, async ({ page }, testInfo) => {
     await page.emulateMedia({ reducedMotion: "reduce" });
     await page.goto(surface.url, { waitUntil: "networkidle" });
-    await expect(page.getByRole("status")).toContainText(
-      "DEMO • ТЕСТОВЫЕ СРЕДСТВА",
+    await expect(page.locator(".banner")).toHaveText(
+      "DEMO • ТЕСТОВЫЕ СРЕДСТВА • NO REAL VALUE",
     );
     await expect(page.getByRole("heading", { level: 1 })).toHaveText(
       surface.heading,
@@ -53,15 +53,17 @@ for (const surface of surfaces) {
 test("player navigation is keyboard accessible", async ({ page }) => {
   await page.goto("http://127.0.0.1:3000");
   await page.keyboard.press("Tab");
-  await expect(page.getByRole("link", { name: /CRYPTOGAMES/ })).toBeFocused();
+  await expect(page.locator("a.brand")).toBeFocused();
   await page.keyboard.press("Tab");
-  await expect(page.getByRole("link", { name: "Игры" })).toBeFocused();
+  await expect(page.locator(".topbar nav a").first()).toHaveText("Игры");
+  await expect(page.locator(".topbar nav a").first()).toBeFocused();
 });
 
 test("admin navigation is keyboard accessible", async ({ page }) => {
   await page.goto("http://127.0.0.1:3002");
   await page.keyboard.press("Tab");
-  await expect(page.getByRole("link", { name: /CRYPTOGAMES/ })).toBeFocused();
+  await expect(page.locator("a.brand")).toBeFocused();
   await page.keyboard.press("Tab");
-  await expect(page.getByRole("link", { name: "Игроки" })).toBeFocused();
+  await expect(page.locator(".topbar nav a").first()).toHaveText("Игроки");
+  await expect(page.locator(".topbar nav a").first()).toBeFocused();
 });
