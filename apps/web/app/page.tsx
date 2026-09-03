@@ -19,12 +19,12 @@ export default function Home() {
               <a href="/wallet">Мой TSC кошелёк</a>
             </div>
           </div>
-          <aside className="hero-panel">
+          <div className="hero-panel">
             <small>ДОСТУПНО</small>
             <strong className="balance">100 000 TSC</strong>
             <p>Test Satoshi Credit · вывод недоступен</p>
             <a href="/wallet">Получить тестовые средства</a>
-          </aside>
+          </div>
         </section>
         <div className="section-head">
           <div>
