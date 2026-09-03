@@ -47,7 +47,11 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
     }
   }
   return (
-    <form onSubmit={submit}>
+    <form
+      onSubmit={(event) => {
+        void submit(event);
+      }}
+    >
       <label className="field">
         Email
         <input required type="email" name="email" autoComplete="email" />
@@ -100,7 +104,13 @@ export function Faucet() {
   return (
     <div>
       <strong className="balance">{balance} TSC</strong>
-      <button onClick={claim}>Получить 100 000 TSC</button>
+      <button
+        onClick={() => {
+          void claim();
+        }}
+      >
+        Получить 100 000 TSC
+      </button>
       <p role="status">{message}</p>
     </div>
   );
@@ -130,7 +140,13 @@ export function DemoWager({ slug }: { slug: string }) {
   }
   return (
     <div>
-      <button onClick={play}>Запустить и поставить 100 TSC</button>
+      <button
+        onClick={() => {
+          void play();
+        }}
+      >
+        Запустить и поставить 100 TSC
+      </button>
       <p role="status">{message}</p>
     </div>
   );
