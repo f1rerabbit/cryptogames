@@ -5,23 +5,24 @@ import {
   NestInterceptor,
 } from "@nestjs/common";
 import { map, Observable } from "rxjs";
+
+function serializeBigInt(value: unknown): unknown {
+  if (typeof value === "bigint") return value.toString();
+  if (Array.isArray(value)) return value.map((item) => serializeBigInt(item));
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, serializeBigInt(item)]),
+    );
+  }
+  return value;
+}
+
 @Injectable()
 export class BigIntInterceptor implements NestInterceptor {
   intercept(
     _context: ExecutionContext,
     next: CallHandler,
   ): Observable<unknown> {
-    return next
-      .handle()
-      .pipe(
-        map(
-          (value) =>
-            JSON.parse(
-              JSON.stringify(value, (_key, item) =>
-                typeof item === "bigint" ? item.toString() : item,
-              ),
-            ) as unknown,
-        ),
-      );
+    return next.handle().pipe(map((value: unknown) => serializeBigInt(value)));
   }
 }
