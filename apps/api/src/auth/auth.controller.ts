@@ -3,6 +3,7 @@ import {
   Controller,
   Get,
   HttpCode,
+  Inject,
   Param,
   Post,
   Req,
@@ -20,7 +21,7 @@ import { CredentialsDto, SessionIdDto } from "./auth.dto.js";
 type AuthRequest = Request & { correlationId: string; user: AuthenticatedUser };
 @Controller()
 export class AuthController {
-  constructor(private readonly auth: AuthService) {}
+  constructor(@Inject(AuthService) private readonly auth: AuthService) {}
   @Public() @Post("auth/register") register(
     @Body() body: CredentialsDto,
     @Req() req: AuthRequest,
