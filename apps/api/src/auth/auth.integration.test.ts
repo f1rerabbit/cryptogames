@@ -51,56 +51,39 @@ describe.skipIf(!databaseUrl)("persistent authentication HTTP workflow", () => {
     });
     expect(stored.passwordHash).not.toBe(credentials.password);
 
-    const login = await request(server)
+    const browser = request.agent(server);
+    const login = await browser
       .post("/v1/auth/login")
       .send(credentials)
       .expect(200);
-    const token = (login.body as { token: string }).token;
-    expect(token).toHaveLength(43);
+    expect(login.body).not.toHaveProperty("token");
+    expect(login.headers["set-cookie"]?.[0]).toContain("HttpOnly");
+    expect(login.headers["set-cookie"]?.[0]).toContain("SameSite=Lax");
     const session = await db.session.findFirstOrThrow({
       where: { userId: stored.id },
     });
-    expect(session.tokenHash).not.toBe(token);
-
-    const me = await request(server)
-      .get("/v1/me")
-      .set("authorization", `Bearer ${token}`)
-      .expect(200);
+    expect(session.tokenHash).toHaveLength(64);
+    const me = await browser.get("/v1/me").expect(200);
     expect(me.body as unknown).toMatchObject({
       id: stored.id,
       email: credentials.email,
       roles: ["PLAYER"],
     });
-    await request(server)
-      .post("/v1/auth/logout")
-      .set("authorization", `Bearer ${token}`)
-      .expect(204);
-    await request(server)
-      .get("/v1/me")
-      .set("authorization", `Bearer ${token}`)
-      .expect(401);
-
-    const secondLogin = await request(server)
-      .post("/v1/auth/login")
-      .send(credentials)
-      .expect(200);
-    const secondToken = (secondLogin.body as { token: string }).token;
-    const sessions = await request(server)
+    await browser.post("/v1/auth/logout").expect(204);
+    await browser.get("/v1/me").expect(401);
+    const secondBrowser = request.agent(server);
+    await secondBrowser.post("/v1/auth/login").send(credentials).expect(200);
+    const sessions = await secondBrowser
       .get("/v1/me/security/sessions")
-      .set("authorization", `Bearer ${secondToken}`)
       .expect(200);
     const current = (
       sessions.body as Array<{ id: string; revokedAt: string | null }>
     ).find((item) => item.revokedAt === null);
     expect(current).toBeDefined();
-    await request(server)
+    await secondBrowser
       .post(`/v1/me/security/sessions/${current!.id}/revoke`)
-      .set("authorization", `Bearer ${secondToken}`)
       .expect(201);
-    await request(server)
-      .get("/v1/me")
-      .set("authorization", `Bearer ${secondToken}`)
-      .expect(401);
+    await secondBrowser.get("/v1/me").expect(401);
     expect(
       await db.auditEvent.count({ where: { actorId: stored.id } }),
     ).toBeGreaterThanOrEqual(3);

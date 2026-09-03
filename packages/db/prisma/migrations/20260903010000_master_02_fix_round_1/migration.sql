@@ -1,0 +1,17 @@
+CREATE TYPE "ProviderEventType" AS ENUM ('COMMIT','SETTLE','REFUND');
+ALTER TABLE "LedgerTransaction" ADD CONSTRAINT "LedgerTransaction_compensatesId_key" UNIQUE ("compensatesId");
+ALTER TABLE "GameSession" ADD COLUMN "providerSessionId" TEXT;
+UPDATE "GameSession" SET "providerSessionId"='cgs_'||"id"::text;
+ALTER TABLE "GameSession" ALTER COLUMN "providerSessionId" SET NOT NULL;
+ALTER TABLE "GameSession" ADD CONSTRAINT "GameSession_providerSessionId_key" UNIQUE ("providerSessionId");
+ALTER TABLE "GameWager" ADD COLUMN "providerRoundId" TEXT;
+UPDATE "GameWager" SET "providerRoundId"='cgr_'||"id"::text;
+ALTER TABLE "GameWager" ALTER COLUMN "providerRoundId" SET NOT NULL;
+ALTER TABLE "GameWager" ADD CONSTRAINT "GameWager_providerRoundId_key" UNIQUE ("providerRoundId");
+CREATE TABLE "ProviderScenarioFixture" ("gameId" UUID PRIMARY KEY REFERENCES "Game"("id"),"scenario" "SettlementResult" NOT NULL,"updatedBy" UUID NOT NULL,"updatedAt" TIMESTAMPTZ NOT NULL DEFAULT now());
+CREATE TABLE "ProviderEvent" ("id" UUID PRIMARY KEY,"eventId" TEXT UNIQUE NOT NULL,"wagerId" UUID NOT NULL REFERENCES "GameWager"("id"),"sessionId" UUID NOT NULL,"type" "ProviderEventType" NOT NULL,"scenario" "SettlementResult","payloadHash" TEXT NOT NULL,"processedAt" TIMESTAMPTZ NOT NULL DEFAULT now());
+CREATE INDEX "ProviderEvent_wagerId_processedAt_idx" ON "ProviderEvent"("wagerId","processedAt");
+CREATE TRIGGER provider_event_append_only BEFORE UPDATE OR DELETE ON "ProviderEvent" FOR EACH ROW EXECUTE FUNCTION reject_append_only_mutation();
+CREATE TABLE "AdminGrantPreview" ("id" UUID PRIMARY KEY,"actorId" UUID NOT NULL REFERENCES "User"("id"),"targetId" UUID NOT NULL REFERENCES "User"("id"),"amount" BIGINT NOT NULL CHECK ("amount">0),"reason" TEXT NOT NULL,"ticket" TEXT NOT NULL,"payloadHash" TEXT NOT NULL,"expiresAt" TIMESTAMPTZ NOT NULL,"executedAt" TIMESTAMPTZ,"transactionId" UUID UNIQUE,"createdAt" TIMESTAMPTZ NOT NULL DEFAULT now());
+CREATE INDEX "AdminGrantPreview_targetId_createdAt_idx" ON "AdminGrantPreview"("targetId","createdAt");
+CREATE INDEX "AdminGrantPreview_actorId_createdAt_idx" ON "AdminGrantPreview"("actorId","createdAt");

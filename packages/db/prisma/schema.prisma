@@ -22,6 +22,40 @@ enum AccountKind {
   RESERVED
   BONUS
   SYSTEM
+  PLAYER_AVAILABLE
+  PLATFORM_TREASURY
+  GAME_ESCROW
+  TEST_FAUCET
+}
+
+enum PlayerStatus {
+  ACTIVE
+  FROZEN
+  SUSPENDED
+}
+enum GameSessionStatus {
+  CREATED
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+enum WagerStatus {
+  PENDING
+  ACCEPTED
+  SETTLED
+  REFUNDED
+  REJECTED
+}
+enum SettlementResult {
+  LOSS
+  WIN_SMALL
+  WIN_LARGE
+  REFUND
+}
+enum ProviderEventType {
+  COMMIT
+  SETTLE
+  REFUND
 }
 
 enum EntryDirection {
@@ -40,6 +74,23 @@ model User {
   sessions     Session[]
   consents     Consent[]
   accounts     LedgerAccount[]
+  profile      PlayerProfile?
+  faucetClaims DemoFaucetClaim[]
+  gameSessions GameSession[]
+  wagers       GameWager[]
+  grantPreviews AdminGrantPreview[] @relation("GrantActor")
+  targetGrants  AdminGrantPreview[] @relation("GrantTarget")
+}
+
+model PlayerProfile {
+  userId      String       @id @db.Uuid
+  displayName String?
+  status      PlayerStatus @default(ACTIVE)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  user        User         @relation(fields: [userId], references: [id])
+
+  @@index([status, createdAt])
 }
 
 model Role {
@@ -128,7 +179,7 @@ model LedgerTransaction {
   assetCode      String
   type           String
   referenceId    String?
-  compensatesId  String?             @db.Uuid
+  compensatesId  String?             @unique @db.Uuid
   correlationId  String
   createdAt      DateTime            @default(now())
   asset          Asset               @relation(fields: [assetCode], references: [code])
@@ -136,8 +187,131 @@ model LedgerTransaction {
   idempotency    IdempotencyRecord?
   compensates    LedgerTransaction?  @relation("LedgerCompensation", fields: [compensatesId], references: [id])
   compensatedBy  LedgerTransaction[] @relation("LedgerCompensation")
+  wagers          GameWager[]          @relation("WagerLedger")
+  settlements     GameWager[]          @relation("SettlementLedger")
 
   @@index([compensatesId])
+}
+
+model DemoFaucetClaim {
+  id             String   @id @default(uuid()) @db.Uuid
+  userId         String   @db.Uuid
+  idempotencyKey String
+  amount         BigInt
+  claimedAt      DateTime @default(now())
+  user           User     @relation(fields: [userId], references: [id])
+
+  @@unique([userId, idempotencyKey])
+  @@index([userId, claimedAt])
+}
+
+model Game {
+  id           String        @id @default(uuid()) @db.Uuid
+  slug         String        @unique
+  name         String
+  provider     String
+  category     String
+  description  String?
+  thumbnailUrl String?
+  active       Boolean       @default(true)
+  demoOnly     Boolean       @default(true)
+  minBet       BigInt
+  maxBet       BigInt
+  sortOrder    Int           @default(0)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  sessions     GameSession[]
+  wagers       GameWager[]
+  scenarioFixture ProviderScenarioFixture?
+
+  @@index([active, sortOrder, id])
+}
+
+model GameSession {
+  id          String            @id @default(uuid()) @db.Uuid
+  userId      String            @db.Uuid
+  gameId      String            @db.Uuid
+  status      GameSessionStatus @default(ACTIVE)
+  startedAt   DateTime          @default(now())
+  completedAt DateTime?
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  providerSessionId String       @unique
+  user        User              @relation(fields: [userId], references: [id])
+  game        Game              @relation(fields: [gameId], references: [id])
+  wagers      GameWager[]
+
+  @@index([userId, createdAt, id])
+  @@index([gameId, createdAt])
+}
+
+model GameWager {
+  id                            String            @id @default(uuid()) @db.Uuid
+  sessionId                     String            @db.Uuid
+  userId                        String            @db.Uuid
+  gameId                        String            @db.Uuid
+  idempotencyKey                String
+  settlementKey                 String?           @unique
+  stake                         BigInt
+  payout                        BigInt?
+  status                        WagerStatus        @default(PENDING)
+  result                        SettlementResult?
+  createdAt                     DateTime           @default(now())
+  settledAt                     DateTime?
+  ledgerTransactionId           String?            @unique @db.Uuid
+  settlementLedgerTransactionId String?            @unique @db.Uuid
+  providerRoundId               String             @unique
+  session                       GameSession         @relation(fields: [sessionId], references: [id])
+  user                          User                @relation(fields: [userId], references: [id])
+  game                          Game                @relation(fields: [gameId], references: [id])
+  ledgerTransaction             LedgerTransaction? @relation("WagerLedger", fields: [ledgerTransactionId], references: [id])
+  settlementLedgerTransaction   LedgerTransaction? @relation("SettlementLedger", fields: [settlementLedgerTransactionId], references: [id])
+  providerEvents                ProviderEvent[]
+
+  @@unique([userId, idempotencyKey])
+  @@index([sessionId, createdAt, id])
+  @@index([userId, createdAt, id])
+}
+
+model ProviderScenarioFixture {
+  gameId    String           @id @db.Uuid
+  scenario  SettlementResult
+  updatedBy String           @db.Uuid
+  updatedAt DateTime         @updatedAt
+  game      Game             @relation(fields: [gameId], references: [id])
+}
+
+model ProviderEvent {
+  id          String            @id @default(uuid()) @db.Uuid
+  eventId     String            @unique
+  wagerId     String            @db.Uuid
+  sessionId   String            @db.Uuid
+  type        ProviderEventType
+  scenario    SettlementResult?
+  payloadHash String
+  processedAt DateTime          @default(now())
+  wager       GameWager         @relation(fields: [wagerId], references: [id])
+
+  @@index([wagerId, processedAt])
+}
+
+model AdminGrantPreview {
+  id          String   @id @default(uuid()) @db.Uuid
+  actorId     String   @db.Uuid
+  targetId    String   @db.Uuid
+  amount      BigInt
+  reason      String
+  ticket      String
+  payloadHash String
+  expiresAt   DateTime
+  executedAt  DateTime?
+  transactionId String? @unique @db.Uuid
+  createdAt   DateTime @default(now())
+  actor       User     @relation("GrantActor", fields: [actorId], references: [id])
+  target      User     @relation("GrantTarget", fields: [targetId], references: [id])
+
+  @@index([targetId, createdAt])
+  @@index([actorId, createdAt])
 }
 
 model LedgerEntry {

@@ -8,6 +8,7 @@ import {
 } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 import type { NextFunction, Request, Response } from "express";
+import { ApplicationError } from "./application-error.js";
 
 @Injectable()
 export class CorrelationMiddleware implements NestMiddleware {
@@ -51,7 +52,12 @@ export class SafeExceptionFilter implements ExceptionFilter {
       .switchToHttp()
       .getRequest<Request & { correlationId?: string }>();
     const status = getHttpStatus(error);
-    const code = status === 500 ? "INTERNAL_ERROR" : "REQUEST_REJECTED";
+    const code =
+      error instanceof ApplicationError
+        ? error.code
+        : status === 500
+          ? "INTERNAL_ERROR"
+          : "REQUEST_REJECTED";
     response.status(status).json({
       error: {
         code,

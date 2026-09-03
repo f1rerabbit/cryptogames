@@ -37,12 +37,22 @@ export class SessionGuard implements CanActivate {
     )
       return true;
     const request = context.switchToHttp().getRequest<{
-      headers: { authorization?: string };
+      headers: { authorization?: string; cookie?: string };
       user?: AuthenticatedUser;
     }>();
-    const [scheme, token] = request.headers.authorization?.split(" ") ?? [];
-    if (scheme !== "Bearer" || !token)
-      throw new UnauthorizedException("Authentication required");
+    const [scheme, bearer] = request.headers.authorization?.split(" ") ?? [];
+    const cookieToken = request.headers.cookie
+      ?.split(";")
+      .map((value) => value.trim())
+      .find((value) => value.startsWith("cg_session="))
+      ?.slice(11);
+    const token =
+      scheme === "Bearer"
+        ? bearer
+        : cookieToken
+          ? decodeURIComponent(cookieToken)
+          : undefined;
+    if (!token) throw new UnauthorizedException("Authentication required");
     const user = await this.auth.authenticate(token);
     if (!user) throw new UnauthorizedException("Authentication required");
     request.user = user;
