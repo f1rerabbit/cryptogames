@@ -1,6 +1,7 @@
 import { createHmac, randomBytes } from "node:crypto";
 import {
   ConflictException,
+  Inject,
   Injectable,
   UnauthorizedException,
 } from "@nestjs/common";
@@ -13,8 +14,8 @@ import { DatabaseService } from "../database/database.service.js";
 @Injectable()
 export class AuthService {
   constructor(
-    private readonly db: DatabaseService,
-    private readonly audit: AuditService,
+    @Inject(DatabaseService) private readonly db: DatabaseService,
+    @Inject(AuditService) private readonly audit: AuditService,
   ) {}
 
   async register(email: string, password: string, correlationId: string) {
