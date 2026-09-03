@@ -1,3 +1,4 @@
+import type { Server } from "node:http";
 import { Test } from "@nestjs/testing";
 import { describe, expect, it, vi } from "vitest";
 import request from "supertest";
@@ -27,13 +28,12 @@ describe("API smoke", () => {
     const app = module.createNestApplication();
     configureApp(app, ["http://localhost:3000"]);
     await app.init();
-    const response = await request(app.getHttpServer())
-      .get("/v1/health")
-      .expect(200);
+    const server = app.getHttpServer() as Server;
+    const response = await request(server).get("/v1/health").expect(200);
     expect((response.body as { status: string }).status).toBe("ok");
     expect(response.headers["x-correlation-id"]).toBeTruthy();
-    await request(app.getHttpServer()).get("/v1/ready").expect(200);
-    await request(app.getHttpServer()).get("/v1/ready").expect(503);
+    await request(server).get("/v1/ready").expect(200);
+    await request(server).get("/v1/ready").expect(503);
     await app.close();
   });
 });
