@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { Injectable } from "@nestjs/common";
+import { Inject, Injectable } from "@nestjs/common";
 import { EntryDirection, Prisma } from "@cg/db";
 import { DatabaseService } from "../database/database.service.js";
 
@@ -22,7 +22,7 @@ export class LedgerError extends Error {}
 
 @Injectable()
 export class LedgerService {
-  constructor(private readonly db: DatabaseService) {}
+  constructor(@Inject(DatabaseService) private readonly db: DatabaseService) {}
 
   async post(command: LedgerCommand) {
     this.validate(command);
