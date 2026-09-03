@@ -53,15 +53,15 @@ for (const surface of surfaces) {
 test("player navigation is keyboard accessible", async ({ page }) => {
   await page.goto("http://127.0.0.1:3000");
   await page.keyboard.press("Tab");
-  await expect(page.getByRole("link", { name: /CRYPTOGAMES/ })).toBeFocused();
+  await expect(page.locator("a.brand")).toBeFocused();
   await page.keyboard.press("Tab");
-  await expect(page.getByRole("link", { name: "Игры" })).toBeFocused();
+  await expect(page.getByRole("link", { name: "Игры", exact: true }).first()).toBeFocused();
 });
 
 test("admin navigation is keyboard accessible", async ({ page }) => {
   await page.goto("http://127.0.0.1:3002");
   await page.keyboard.press("Tab");
-  await expect(page.getByRole("link", { name: /CRYPTOGAMES/ })).toBeFocused();
+  await expect(page.locator("a.brand")).toBeFocused();
   await page.keyboard.press("Tab");
-  await expect(page.getByRole("link", { name: "Игроки" })).toBeFocused();
+  await expect(page.getByRole("link", { name: "Игроки", exact: true })).toBeFocused();
 });
