@@ -7,6 +7,7 @@ COPY apps ./apps
 COPY packages ./packages
 COPY tsconfig.base.json eslint.config.mjs vitest.config.ts ./
 RUN pnpm install --frozen-lockfile
+RUN pnpm db:generate
 ARG APP=@cg/api
 RUN pnpm --filter "$APP" build
 CMD ["pnpm","--filter","@cg/api","start"]
