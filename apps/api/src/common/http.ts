@@ -8,6 +8,7 @@ import {
 } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 import type { NextFunction, Request, Response } from "express";
+
 @Injectable()
 export class CorrelationMiddleware implements NestMiddleware {
   use(req: Request, res: Response, next: NextFunction) {
@@ -21,6 +22,27 @@ export class CorrelationMiddleware implements NestMiddleware {
     next();
   }
 }
+
+function getHttpStatus(error: unknown): number {
+  if (error instanceof HttpException) return error.getStatus();
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "getStatus" in error &&
+    typeof (error as { getStatus?: unknown }).getStatus === "function"
+  ) {
+    const status = (error as { getStatus: () => unknown }).getStatus();
+    if (
+      typeof status === "number" &&
+      Number.isInteger(status) &&
+      status >= 400 &&
+      status <= 599
+    )
+      return status;
+  }
+  return 500;
+}
+
 @Catch()
 export class SafeExceptionFilter implements ExceptionFilter {
   catch(error: unknown, host: ArgumentsHost) {
@@ -28,7 +50,7 @@ export class SafeExceptionFilter implements ExceptionFilter {
     const request = host
       .switchToHttp()
       .getRequest<Request & { correlationId?: string }>();
-    const status = error instanceof HttpException ? error.getStatus() : 500;
+    const status = getHttpStatus(error);
     const code = status === 500 ? "INTERNAL_ERROR" : "REQUEST_REJECTED";
     response.status(status).json({
       error: {
