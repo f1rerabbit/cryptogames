@@ -36,8 +36,9 @@ for (const surface of surfaces) {
       const box = await link.boundingBox();
       expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);
       const href = await link.getAttribute("href");
-      if (href?.startsWith("#"))
+      if (href?.startsWith("#")) {
         await expect(page.locator(href)).toHaveCount(1);
+      }
     }
     const transitionDuration = await page
       .locator("main")
@@ -55,7 +56,9 @@ test("player navigation is keyboard accessible", async ({ page }) => {
   await page.keyboard.press("Tab");
   await expect(page.locator("a.brand")).toBeFocused();
   await page.keyboard.press("Tab");
-  await expect(page.getByRole("link", { name: "Игры", exact: true }).first()).toBeFocused();
+  await expect(
+    page.getByRole("link", { name: "Игры", exact: true }).first(),
+  ).toBeFocused();
 });
 
 test("admin navigation is keyboard accessible", async ({ page }) => {
@@ -63,5 +66,7 @@ test("admin navigation is keyboard accessible", async ({ page }) => {
   await page.keyboard.press("Tab");
   await expect(page.locator("a.brand")).toBeFocused();
   await page.keyboard.press("Tab");
-  await expect(page.getByRole("link", { name: "Игроки", exact: true })).toBeFocused();
+  await expect(
+    page.getByRole("link", { name: "Игроки", exact: true }),
+  ).toBeFocused();
 });
