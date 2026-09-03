@@ -197,7 +197,8 @@ export class LedgerService {
             compensatesId: command.compensatesId ?? null,
             entries: command.entries,
           },
-          (_, value) => (typeof value === "bigint" ? value.toString() : value),
+          (_key: string, value: unknown): unknown =>
+            typeof value === "bigint" ? value.toString() : value,
         ),
       )
       .digest("hex");
