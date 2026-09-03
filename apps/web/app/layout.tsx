@@ -1,6 +1,6 @@
 import "@cg/ui/styles.css";
 export const metadata = {
-  title: "web" === "web" ? "Emerald Play Demo" : "Emerald Operations",
+  title: "Emerald Play Demo",
 };
 export default function Layout({ children }: { children: React.ReactNode }) {
   return (
