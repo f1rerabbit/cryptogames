@@ -1,0 +1,44 @@
+name: quality
+on: [push, pull_request]
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17.6-alpine
+        env:
+          {
+            POSTGRES_DB: platform,
+            POSTGRES_USER: platform,
+            POSTGRES_PASSWORD: platform,
+          }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U platform" --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:8.2.1-alpine
+        ports: ["6379:6379"]
+    env:
+      DATABASE_URL: postgresql://platform:platform@localhost:5432/platform?schema=public
+      TEST_DATABASE_URL: postgresql://platform:platform@localhost:5432/platform?schema=public
+      REDIS_URL: redis://localhost:6379
+      SESSION_SECRET: ci-only-session-secret-at-least-32-characters
+      WEB_ORIGIN: http://localhost:3000
+      ADMIN_ORIGIN: http://localhost:3002
+      NODE_ENV: test
+      DEMO_ACCOUNT_PASSWORD: ci-demo-password-only
+      DEMO_ADMIN_EMAIL: admin@example.invalid
+      DEMO_PLAYER_EMAIL: player@example.invalid
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 10.28.1 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 24, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm db:generate
+      - run: pnpm --filter @cg/db validate
+      - run: pnpm migrate && pnpm seed
+      - run: pnpm seed:verify-fail-closed
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm quality

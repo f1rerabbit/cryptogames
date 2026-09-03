@@ -1,0 +1,27 @@
+CREATE TYPE "RoleName" AS ENUM ('PLAYER','SUPPORT','FINANCE','RISK','CONTENT','ADMIN','AUDITOR');
+CREATE TYPE "AccountKind" AS ENUM ('TEST_FUNDS','RESERVED','BONUS','SYSTEM');
+CREATE TYPE "EntryDirection" AS ENUM ('DEBIT','CREDIT');
+CREATE TABLE "User" ("id" UUID PRIMARY KEY, "email" TEXT UNIQUE NOT NULL, "passwordHash" TEXT NOT NULL, "status" TEXT NOT NULL DEFAULT 'ACTIVE', "createdAt" TIMESTAMPTZ NOT NULL DEFAULT now(), "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT now());
+CREATE TABLE "Role" ("id" UUID PRIMARY KEY, "name" "RoleName" UNIQUE NOT NULL);
+CREATE TABLE "UserRole" ("userId" UUID REFERENCES "User"("id"), "roleId" UUID REFERENCES "Role"("id"), PRIMARY KEY("userId","roleId"));
+CREATE TABLE "Session" ("id" UUID PRIMARY KEY, "userId" UUID NOT NULL REFERENCES "User"("id"), "tokenHash" TEXT UNIQUE NOT NULL, "expiresAt" TIMESTAMPTZ NOT NULL, "revokedAt" TIMESTAMPTZ, "createdAt" TIMESTAMPTZ NOT NULL DEFAULT now());
+CREATE TABLE "Consent" ("id" UUID PRIMARY KEY, "userId" UUID NOT NULL REFERENCES "User"("id"), "documentType" TEXT NOT NULL, "documentVersion" TEXT NOT NULL, "documentHash" TEXT NOT NULL, "acceptedAt" TIMESTAMPTZ NOT NULL DEFAULT now(), UNIQUE("userId","documentType","documentVersion"));
+CREATE TABLE "AuditEvent" ("id" UUID PRIMARY KEY, "actorId" UUID, "subjectId" UUID, "action" TEXT NOT NULL, "outcome" TEXT NOT NULL, "reason" TEXT, "correlationId" TEXT NOT NULL, "metadata" JSONB NOT NULL, "createdAt" TIMESTAMPTZ NOT NULL DEFAULT now());
+CREATE TABLE "FeatureFlag" ("key" TEXT PRIMARY KEY, "enabled" BOOLEAN NOT NULL DEFAULT false, "description" TEXT NOT NULL, "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT now());
+CREATE TABLE "Asset" ("code" TEXT PRIMARY KEY, "name" TEXT NOT NULL, "scale" INTEGER NOT NULL DEFAULT 0, "withdrawable" BOOLEAN NOT NULL DEFAULT false);
+CREATE TABLE "LedgerAccount" ("id" UUID PRIMARY KEY, "userId" UUID REFERENCES "User"("id"), "assetCode" TEXT NOT NULL REFERENCES "Asset"("code"), "kind" "AccountKind" NOT NULL, "allowNegative" BOOLEAN NOT NULL DEFAULT false, "createdAt" TIMESTAMPTZ NOT NULL DEFAULT now());
+CREATE UNIQUE INDEX "LedgerAccount_owner_asset_kind" ON "LedgerAccount" (COALESCE("userId",'00000000-0000-0000-0000-000000000000'::uuid),"assetCode","kind");
+CREATE TABLE "LedgerTransaction" ("id" UUID PRIMARY KEY, "assetCode" TEXT NOT NULL REFERENCES "Asset"("code"), "type" TEXT NOT NULL, "referenceId" TEXT, "compensatesId" UUID, "correlationId" TEXT NOT NULL, "createdAt" TIMESTAMPTZ NOT NULL DEFAULT now());
+CREATE TABLE "LedgerEntry" ("id" UUID PRIMARY KEY, "transactionId" UUID NOT NULL REFERENCES "LedgerTransaction"("id"), "accountId" UUID NOT NULL REFERENCES "LedgerAccount"("id"), "direction" "EntryDirection" NOT NULL, "amount" BIGINT NOT NULL CHECK ("amount">0), "createdAt" TIMESTAMPTZ NOT NULL DEFAULT now());
+CREATE TABLE "IdempotencyRecord" ("id" UUID PRIMARY KEY, "key" TEXT NOT NULL, "scope" TEXT NOT NULL, "requestHash" TEXT NOT NULL, "transactionId" UUID UNIQUE NOT NULL REFERENCES "LedgerTransaction"("id"), "createdAt" TIMESTAMPTZ NOT NULL DEFAULT now());
+CREATE UNIQUE INDEX "IdempotencyRecord_scope_key" ON "IdempotencyRecord"("scope","key");
+CREATE INDEX "AuditEvent_correlationId_idx" ON "AuditEvent"("correlationId");
+CREATE INDEX "LedgerTransaction_compensatesId_idx" ON "LedgerTransaction"("compensatesId");
+ALTER TABLE "LedgerTransaction" ADD CONSTRAINT "LedgerTransaction_compensatesId_fkey" FOREIGN KEY ("compensatesId") REFERENCES "LedgerTransaction"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+CREATE INDEX "LedgerEntry_accountId_createdAt_idx" ON "LedgerEntry"("accountId", "createdAt");
+-- Ledger and audit rows are append-only for the application database role.
+CREATE FUNCTION reject_append_only_mutation() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'append-only relation'; END $$;
+CREATE TRIGGER ledger_transaction_append_only BEFORE UPDATE OR DELETE ON "LedgerTransaction" FOR EACH ROW EXECUTE FUNCTION reject_append_only_mutation();
+CREATE TRIGGER ledger_entry_append_only BEFORE UPDATE OR DELETE ON "LedgerEntry" FOR EACH ROW EXECUTE FUNCTION reject_append_only_mutation();
+CREATE TRIGGER idempotency_record_append_only BEFORE UPDATE OR DELETE ON "IdempotencyRecord" FOR EACH ROW EXECUTE FUNCTION reject_append_only_mutation();
+CREATE TRIGGER audit_event_append_only BEFORE UPDATE OR DELETE ON "AuditEvent" FOR EACH ROW EXECUTE FUNCTION reject_append_only_mutation();

@@ -1,0 +1,11 @@
+.next
+dist
+coverage
+pnpm-lock.yaml
+docs/reference
+docs/DESIGN-QUALITY-GATE.md
+docs/design
+docs/product-spec
+prompts
+AGENTS.md
+START-HERE.md

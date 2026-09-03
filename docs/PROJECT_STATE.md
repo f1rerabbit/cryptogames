@@ -1,26 +1,83 @@
 # Project State
 
-## Current phase
+## Current phase and verdict
 
-Specification package prepared. Implementation has not started.
+MASTER-01 final quality gate completed on branch `codex/-agents.md` (2026-09-03).
 
-## Completed
+**Verdict: PASS**
 
-- Product specification.
-- Design specification and visual reference.
-- Codex repository rules.
-- Master prompts 1–6.
+**MASTER-02 readiness: READY AFTER MERGE OF PR #1**
 
-## Active constraints
+The previously blocked dependency, database, browser, and runtime checks have now executed successfully in GitHub Actions and on the target server runtime.
 
-- Prompts 1–3: demo/test only.
-- Real cryptocurrency forbidden until Prompt 5.
-- No real game engine in current scope; use provider simulator.
+## Verified scope
+
+- PostgreSQL-backed double-entry ledger with serializable transactions, deterministic locking, idempotency, compensation, and append-only protections.
+- Persistent authentication with Argon2id password hashing, opaque HMAC sessions, RBAC, audit events, validation, and safe error envelopes.
+- PostgreSQL and Redis readiness checks.
+- Player/admin Next.js surfaces and shared UI package.
+- Production-shaped Docker build and Compose runtime.
+- TSC remains a demo-only, non-withdrawable, no-value asset. No real cryptocurrency, deposits, withdrawals, custody, signing, or payments are part of MASTER-01.
+
+## Closed critic findings
+
+- `M01-C-001` P0 — Prisma UUID schema/migration mismatch: fixed and regression-tested.
+- `M01-C-002` P1 — Playwright production-mode and viewport coverage gap: fixed; 1440/1024/768/390 are exercised.
+- `M01-C-003` P2 — navigation/target-size issues: fixed and browser-tested.
+- `M01-C-004` P2 — duplicate-registration audit and production-equivalent HTTP setup: fixed and integration-tested.
+- `M01-C-005` P2 — development seed password-hash rotation: fixed and PostgreSQL-tested.
+- Docker build gap — Prisma client generation was missing inside the image: fixed by running `pnpm db:generate` before API build.
+- Compose networking gap — API container previously inherited localhost database/Redis URLs: fixed with service-network URLs for `postgres` and `redis`.
+
+### Open counts
+
+- P0: 0
+- P1: 0
+- P2: 0
+- P3: 1 non-blocking runtime warning: NestJS `LegacyRouteConverter` auto-converts the middleware wildcard route. Routes and correlation middleware are operational; this should be cleaned up during routine framework maintenance.
+
+## Automated quality gate
+
+GitHub Actions `quality` is green on the Docker-fix head. Verified stages include:
+
+- frozen `pnpm` install
+- Prisma generate and validate
+- migration + development seed
+- production seed fail-closed check
+- format check
+- ESLint
+- strict TypeScript typecheck
+- unit tests
+- PostgreSQL integration tests
+- API smoke test
+- production builds
+- Playwright e2e on 1440/1024/768/390
+- axe accessibility checks
+- keyboard navigation
+- horizontal-overflow checks
+- reduced-motion behavior
+- database schema validation
+
+## Server runtime gate
+
+Verified on the target server with Docker Compose:
+
+- clean API image build succeeds
+- PostgreSQL 17.6 container healthy
+- Redis 8.2.1 container healthy
+- foundation migration deploy succeeds
+- API container starts successfully on `127.0.0.1:3001`
+- `GET /v1/health` returns HTTP 200 with `{ "status": "ok", "service": "api" }`
+- `GET /v1/ready` returns HTTP 200 with PostgreSQL and Redis both `true`
+- startup logs show all NestJS modules initialized and application started successfully
+
+## Evidence / operational notes
+
+- GitHub Actions is the canonical automated gate.
+- Runtime health/readiness endpoints use the global `/v1` prefix.
+- PostgreSQL and Redis are not exposed publicly by Compose; API is bound to loopback for this foundation runtime.
+- The `.env.example` file contains development/demo placeholders only; production secrets must be provisioned separately before any production deployment.
 
 ## Next step
 
-Run `prompts/MASTER-01-FOUNDATION.md` in a new repository.
-
-## Update rule
-
-Every Codex run must update this file with implemented modules, exact checks, unresolved risks, active branch and next prompt readiness.
+PR #1 may be merged into `main` after confirming its latest GitHub checks remain green. After merge, synchronize the server to `main`, repeat the short health/readiness smoke check, and then begin MASTER-02.
