@@ -37,7 +37,11 @@ export function AdminLogin() {
     }
   }
   return (
-    <form onSubmit={submit}>
+    <form
+      onSubmit={(event) => {
+        void submit(event);
+      }}
+    >
       <label className="field">
         Admin email
         <input name="email" type="email" required />
@@ -69,31 +73,43 @@ export function PlayerActions({ id }: { id: string }) {
       <h2>Финансовые и status actions</h2>
       <div className="actions">
         <button
-          onClick={() =>
-            action("credit", {
+          onClick={() => {
+            void action("credit", {
               amount: "1000",
               reason: "Demo support adjustment",
               ticket: "DEMO-UI",
               idempotencyKey: crypto.randomUUID(),
-            })
-          }
+            });
+          }}
         >
           Credit 1 000 TSC
         </button>
         <button
-          onClick={() =>
-            action("debit", {
+          onClick={() => {
+            void action("debit", {
               amount: "100",
               reason: "Demo correction",
               ticket: "DEMO-UI",
               idempotencyKey: crypto.randomUUID(),
-            })
-          }
+            });
+          }}
         >
           Debit 100 TSC
         </button>
-        <button onClick={() => action("freeze")}>Freeze</button>
-        <button onClick={() => action("unfreeze")}>Unfreeze</button>
+        <button
+          onClick={() => {
+            void action("freeze");
+          }}
+        >
+          Freeze
+        </button>
+        <button
+          onClick={() => {
+            void action("unfreeze");
+          }}
+        >
+          Unfreeze
+        </button>
       </div>
       <p role="status">{m}</p>
     </section>
