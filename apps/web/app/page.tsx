@@ -1,26 +1,40 @@
-import { DemoBanner, Shell } from "@cg/ui";
+import { GameGrid, Page, Shell } from "@cg/ui";
 export default function Home() {
   return (
     <Shell>
-      <DemoBanner />
-      <main>
-        <p className="eyebrow">PLAYER PLATFORM</p>
-        <h1>Игровое лобби готовится</h1>
-        <p>
-          Безопасный фундамент демонстрационной платформы. Единственный тестовый
-          актив — TSC, он не имеет денежной стоимости и не выводится.
-        </p>
-        <nav aria-label="Основное меню">
-          <a href="#catalog">Каталог</a>
-        </nav>
-        <section id="catalog" className="card">
-          <h2>DEMO-каталог</h2>
-          <p>
-            Игры появятся на следующем этапе. Сейчас доступны только проверяемые
-            системные контуры.
-          </p>
+      <Page
+        eyebrow="PLAYER PLATFORM • DEMO"
+        title="Играй без риска. Проверяй каждый ход."
+      >
+        <section className="hero">
+          <div>
+            <p>
+              Демонстрационное игровое лобби с серверным учётом каждого TSC.
+              Только тестовые сценарии — никакой реальной криптовалюты.
+            </p>
+            <div className="actions">
+              <a className="primary" href="/games">
+                Смотреть игры
+              </a>
+              <a href="/wallet">Мой TSC кошелёк</a>
+            </div>
+          </div>
+          <div className="hero-panel">
+            <small>ДОСТУПНО</small>
+            <strong className="balance">100 000 TSC</strong>
+            <p>Test Satoshi Credit · вывод недоступен</p>
+            <a href="/wallet">Получить тестовые средства</a>
+          </div>
         </section>
-      </main>
+        <div className="section-head">
+          <div>
+            <p className="eyebrow">DETERMINISTIC CATALOG</p>
+            <h2>Демо-игры</h2>
+          </div>
+          <a href="/games">Весь каталог</a>
+        </div>
+        <GameGrid />
+      </Page>
     </Shell>
   );
 }

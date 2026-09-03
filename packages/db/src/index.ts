@@ -4,6 +4,10 @@ export {
   AccountKind,
   EntryDirection,
   RoleName,
+  PlayerStatus,
+  GameSessionStatus,
+  WagerStatus,
+  SettlementResult,
 } from "@prisma/client";
 export type {
   User,
@@ -11,4 +15,9 @@ export type {
   LedgerAccount,
   LedgerTransaction,
   LedgerEntry,
+  PlayerProfile,
+  DemoFaucetClaim,
+  Game,
+  GameSession,
+  GameWager,
 } from "@prisma/client";

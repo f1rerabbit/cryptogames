@@ -26,3 +26,12 @@ Use a non-root service identity, external TLS reverse proxy, secret manager, and
 ## Recovery
 
 Stop command traffic, preserve logs/correlation IDs, compare balanced ledger totals, restore to an isolated database, and replay only commands whose scoped idempotency records are absent. Never repair history with SQL update; append a compensating transaction after approval.
+
+## MASTER-02 verification
+
+After migration and seed, authenticate the demo player, call `POST /v1/me/wallet/faucet`
+with a unique idempotency key, inspect `/v1/me/wallet`, create a session from an active game,
+and place an integer wager. Authenticate the demo admin to adjust test funds, freeze/unfreeze
+the profile, and settle a wager. Confirm each mutation in `/v1/admin/audit` and balanced
+entries in `/v1/admin/ledger/transactions`. In production mode, faucet and adjustment
+requests must return 404 `DEMO_FUNDS_DISABLED`.

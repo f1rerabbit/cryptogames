@@ -7,6 +7,7 @@ export const envSchema = z.object({
   API_PORT: z.coerce.number().int().positive().default(3001),
   WEB_ORIGIN: z.string().url(),
   ADMIN_ORIGIN: z.string().url(),
+  DEMO_FAUCET_AMOUNT: z.coerce.bigint().positive().default(100000n),
 });
 export type Environment = z.infer<typeof envSchema>;
 export function parseEnv(env: NodeJS.ProcessEnv): Environment {
