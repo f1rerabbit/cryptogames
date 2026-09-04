@@ -314,4 +314,507 @@ describe.skipIf(!url)("MASTER-02 PostgreSQL vertical slice", () => {
       ),
     ).rejects.toMatchObject({ code: "WAGER_NOT_FOUND" });
   });
+
+  it("atomically deduplicates concurrent provider SETTLE and COMMIT callbacks", async () => {
+    const adapter = new DemoProviderAdapter();
+    const session = await games.createSession(
+      userId,
+      "integration-dice",
+      "race",
+    );
+    const wager = await games.wager(
+      userId,
+      session.id,
+      "100",
+      randomUUID(),
+      "race",
+    );
+    const commit = {
+      eventId: `commit-${randomUUID()}`,
+      providerSessionId: session.providerSessionId,
+      providerRoundId: wager.providerRoundId,
+      type: ProviderEventType.COMMIT,
+    };
+    const commits = await Promise.all([
+      provider.process(commit, adapter.sign(commit), adminId, "race"),
+      provider.process(commit, adapter.sign(commit), adminId, "race"),
+    ]);
+    expect(commits.some((result) => result.duplicate)).toBe(true);
+    expect(
+      await db.providerEvent.count({ where: { eventId: commit.eventId } }),
+    ).toBe(1);
+    expect(
+      await db.auditEvent.count({
+        where: { subjectId: wager.id, action: "PROVIDER_COMMIT" },
+      }),
+    ).toBe(1);
+
+    const settle = {
+      eventId: `settle-${randomUUID()}`,
+      providerSessionId: session.providerSessionId,
+      providerRoundId: wager.providerRoundId,
+      type: ProviderEventType.SETTLE,
+      scenario: SettlementResult.WIN_SMALL,
+    };
+    const settled = await Promise.all([
+      provider.process(settle, adapter.sign(settle), adminId, "race"),
+      provider.process(settle, adapter.sign(settle), adminId, "race"),
+    ]);
+    expect(settled.some((result) => result.duplicate)).toBe(true);
+    expect(
+      await db.providerEvent.count({ where: { eventId: settle.eventId } }),
+    ).toBe(1);
+    expect(
+      await db.auditEvent.count({
+        where: { subjectId: wager.id, action: "WAGER_SETTLE" },
+      }),
+    ).toBe(1);
+  });
+
+  it("returns a stable conflict for concurrent changed provider payloads", async () => {
+    const adapter = new DemoProviderAdapter();
+    const session = await games.createSession(
+      userId,
+      "integration-dice",
+      "race-conflict",
+    );
+    const wager = await games.wager(
+      userId,
+      session.id,
+      "100",
+      randomUUID(),
+      "race-conflict",
+    );
+    const commit = {
+      eventId: `commit-${randomUUID()}`,
+      providerSessionId: session.providerSessionId,
+      providerRoundId: wager.providerRoundId,
+      type: ProviderEventType.COMMIT,
+    };
+    await provider.process(
+      commit,
+      adapter.sign(commit),
+      adminId,
+      "race-conflict",
+    );
+    const base = {
+      eventId: `settle-${randomUUID()}`,
+      providerSessionId: session.providerSessionId,
+      providerRoundId: wager.providerRoundId,
+      type: ProviderEventType.SETTLE,
+    };
+    const left = { ...base, scenario: SettlementResult.LOSS };
+    const right = { ...base, scenario: SettlementResult.WIN_LARGE };
+    const results = await Promise.allSettled([
+      provider.process(left, adapter.sign(left), adminId, "race-conflict"),
+      provider.process(right, adapter.sign(right), adminId, "race-conflict"),
+    ]);
+    expect(
+      results.filter((result) => result.status === "fulfilled"),
+    ).toHaveLength(1);
+    const rejected = results.find((result) => result.status === "rejected");
+    expect(rejected).toMatchObject({
+      reason: { code: "IDEMPOTENCY_CONFLICT" },
+    });
+    expect(
+      await db.providerEvent.count({ where: { eventId: base.eventId } }),
+    ).toBe(1);
+  });
+
+  it("rolls back provider event, settlement ledger, wager and session atomically", async () => {
+    const adapter = new DemoProviderAdapter();
+    const session = await games.createSession(
+      userId,
+      "integration-dice",
+      "rollback",
+    );
+    const wager = await games.wager(
+      userId,
+      session.id,
+      "100",
+      randomUUID(),
+      "rollback",
+    );
+    const commit = {
+      eventId: `commit-${randomUUID()}`,
+      providerSessionId: session.providerSessionId,
+      providerRoundId: wager.providerRoundId,
+      type: ProviderEventType.COMMIT,
+    };
+    await provider.process(commit, adapter.sign(commit), adminId, "rollback");
+    await db.$executeRawUnsafe(
+      `CREATE FUNCTION reject_round2_session_update() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'round2 rollback'; END $$`,
+    );
+    await db.$executeRawUnsafe(
+      `CREATE TRIGGER reject_round2_session_update BEFORE UPDATE ON "GameSession" FOR EACH ROW EXECUTE FUNCTION reject_round2_session_update()`,
+    );
+    const settle = {
+      eventId: `settle-${randomUUID()}`,
+      providerSessionId: session.providerSessionId,
+      providerRoundId: wager.providerRoundId,
+      type: ProviderEventType.SETTLE,
+      scenario: SettlementResult.LOSS,
+    };
+    try {
+      await expect(
+        provider.process(settle, adapter.sign(settle), adminId, "rollback"),
+      ).rejects.toBeDefined();
+    } finally {
+      await db.$executeRawUnsafe(
+        `DROP TRIGGER reject_round2_session_update ON "GameSession"`,
+      );
+      await db.$executeRawUnsafe(
+        `DROP FUNCTION reject_round2_session_update()`,
+      );
+    }
+    expect(
+      await db.providerEvent.count({ where: { eventId: settle.eventId } }),
+    ).toBe(0);
+    expect(
+      await db.gameWager.findUniqueOrThrow({ where: { id: wager.id } }),
+    ).toMatchObject({
+      status: "ACCEPTED",
+      settlementLedgerTransactionId: null,
+    });
+    expect(
+      await db.gameSession.findUniqueOrThrow({ where: { id: session.id } }),
+    ).toMatchObject({ status: "ACTIVE" });
+  });
+
+  it("replays an executed grant after expiry and binds idempotency to its preview", async () => {
+    const first = await admin.previewGrant(
+      userId,
+      "200",
+      "expiry grant",
+      "R2-EXPIRY",
+      adminId,
+      "grant",
+    );
+    const granted = await admin.confirmGrant(
+      first.id,
+      first.payloadHash,
+      "round2-grant-key",
+      adminId,
+      "grant",
+    );
+    await db.adminGrantPreview.update({
+      where: { id: first.id },
+      data: { expiresAt: new Date(0) },
+    });
+    expect(
+      await admin.confirmGrant(
+        first.id,
+        first.payloadHash,
+        "round2-grant-key",
+        adminId,
+        "grant",
+      ),
+    ).toMatchObject({ transactionId: granted.transactionId, duplicate: true });
+    const changed = await admin.previewGrant(
+      userId,
+      "200",
+      "changed reason",
+      "R2-EXPIRY",
+      adminId,
+      "grant",
+    );
+    await expect(
+      admin.confirmGrant(
+        changed.id,
+        changed.payloadHash,
+        "round2-grant-key",
+        adminId,
+        "grant",
+      ),
+    ).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
+  });
+
+  it("restricts generic corrections to test-fund transactions", async () => {
+    const wagerTransaction = await db.ledgerTransaction.findFirstOrThrow({
+      where: { type: "GAME_WAGER" },
+    });
+    const settlementTransaction = await db.ledgerTransaction.findFirstOrThrow({
+      where: { type: "GAME_SETTLEMENT" },
+    });
+    const refundTransaction = await db.ledgerTransaction.findFirstOrThrow({
+      where: { type: "GAME_REFUND" },
+    });
+    for (const transaction of [
+      wagerTransaction,
+      settlementTransaction,
+      refundTransaction,
+    ])
+      await expect(
+        admin.correct(
+          transaction.id,
+          "unsafe reversal",
+          "R2-CORRECTION",
+          randomUUID(),
+          adminId,
+          "correction",
+        ),
+      ).rejects.toMatchObject({ code: "TRANSACTION_NOT_CORRECTABLE" });
+  });
+
+  it("enforces cancellation terminal states and open-wager protection", async () => {
+    const cancellable = await games.createSession(
+      userId,
+      "integration-dice",
+      "cancel",
+    );
+    expect(
+      await games.cancelSession(userId, cancellable.id, "cancel"),
+    ).toMatchObject({ status: "CANCELLED" });
+    await expect(
+      games.cancelSession(userId, cancellable.id, "cancel"),
+    ).rejects.toMatchObject({ code: "SESSION_NOT_ACTIVE" });
+    const open = await games.createSession(
+      userId,
+      "integration-dice",
+      "cancel",
+    );
+    await games.wager(userId, open.id, "100", randomUUID(), "cancel");
+    await expect(
+      games.cancelSession(userId, open.id, "cancel"),
+    ).rejects.toMatchObject({ code: "SESSION_HAS_OPEN_WAGER" });
+    const completed = await db.gameSession.findFirstOrThrow({
+      where: { status: "COMPLETED", userId },
+    });
+    await expect(
+      games.cancelSession(userId, completed.id, "cancel"),
+    ).rejects.toMatchObject({ code: "SESSION_NOT_ACTIVE" });
+  });
+
+  it("settles an already reserved wager after freeze while blocking new mutations", async () => {
+    const game = await db.game.findUniqueOrThrow({
+      where: { slug: "integration-dice" },
+    });
+    await provider.configure(
+      game.id,
+      SettlementResult.REFUND,
+      adminId,
+      "freeze-after-reserve",
+    );
+    const reservedSession = await games.createSession(
+      userId,
+      "integration-dice",
+      "freeze-after-reserve",
+    );
+    const emptySession = await games.createSession(
+      userId,
+      "integration-dice",
+      "freeze-after-reserve",
+    );
+    const wager = await games.wager(
+      userId,
+      reservedSession.id,
+      "100",
+      randomUUID(),
+      "freeze-after-reserve",
+    );
+    await admin.status(
+      userId,
+      PlayerStatus.FROZEN,
+      adminId,
+      "freeze-after-reserve",
+    );
+    await provider.simulate(wager.id, adminId, "freeze-after-reserve");
+    expect(
+      await db.gameWager.findUniqueOrThrow({ where: { id: wager.id } }),
+    ).toMatchObject({ status: "REFUNDED" });
+    await expect(
+      games.wager(
+        userId,
+        emptySession.id,
+        "100",
+        randomUUID(),
+        "freeze-after-reserve",
+      ),
+    ).rejects.toMatchObject({ code: "ACCOUNT_FROZEN" });
+    await expect(
+      player.faucet(userId, randomUUID(), "freeze-after-reserve"),
+    ).rejects.toMatchObject({ code: "ACCOUNT_FROZEN" });
+    await admin.status(
+      userId,
+      PlayerStatus.ACTIVE,
+      adminId,
+      "freeze-after-reserve",
+    );
+  });
+
+  it("preserves one compensation and one semantic audit under correction concurrency", async () => {
+    const preview = await admin.previewGrant(
+      userId,
+      "300",
+      "concurrent correction",
+      "R2-CORR",
+      adminId,
+      "correction-race",
+    );
+    const grant = await admin.confirmGrant(
+      preview.id,
+      preview.payloadHash,
+      randomUUID(),
+      adminId,
+      "correction-race",
+    );
+    const key = randomUUID();
+    const results = await Promise.all([
+      admin.correct(
+        grant.transactionId,
+        "concurrent correction",
+        "R2-CORR-2",
+        key,
+        adminId,
+        "correction-race",
+      ),
+      admin.correct(
+        grant.transactionId,
+        "concurrent correction",
+        "R2-CORR-2",
+        key,
+        adminId,
+        "correction-race",
+      ),
+    ]);
+    expect(new Set(results.map((result) => result.transactionId)).size).toBe(1);
+    expect(
+      await db.ledgerTransaction.count({
+        where: { compensatesId: grant.transactionId },
+      }),
+    ).toBe(1);
+    expect(
+      await db.auditEvent.count({
+        where: {
+          subjectId: grant.transactionId,
+          action: "TEST_FUNDS_CORRECTION",
+        },
+      }),
+    ).toBe(1);
+  });
+
+  it("cannot concurrently remove the final ADMIN role", async () => {
+    const adminRole = await db.role.findUniqueOrThrow({
+      where: { name: RoleName.ADMIN },
+    });
+    const second = await db.user.create({
+      data: {
+        email: `second-admin-${randomUUID()}@example.invalid`,
+        passwordHash: "test",
+      },
+    });
+    await db.userRole.createMany({
+      data: [
+        { userId: adminId, roleId: adminRole.id },
+        { userId: second.id, roleId: adminRole.id },
+      ],
+    });
+    const outcomes = await Promise.allSettled([
+      admin.setRole(adminId, RoleName.ADMIN, false, adminId, "role-race"),
+      admin.setRole(second.id, RoleName.ADMIN, false, second.id, "role-race"),
+    ]);
+    expect(
+      outcomes.filter((outcome) => outcome.status === "fulfilled"),
+    ).toHaveLength(1);
+    expect(
+      outcomes.find((outcome) => outcome.status === "rejected"),
+    ).toMatchObject({ reason: { code: "LAST_ADMIN" } });
+    expect(await db.userRole.count({ where: { roleId: adminRole.id } })).toBe(
+      1,
+    );
+  });
+
+  it("serializes concurrent grant confirmation and daily aggregate limits", async () => {
+    const target = await db.user.create({
+      data: {
+        email: `grant-target-${randomUUID()}@example.invalid`,
+        passwordHash: "test",
+        profile: { create: {} },
+        accounts: {
+          create: { assetCode: "TSC", kind: AccountKind.PLAYER_AVAILABLE },
+        },
+      },
+    });
+    const preview = await admin.previewGrant(
+      target.id,
+      "100",
+      "same preview race",
+      "R2-GRANT",
+      adminId,
+      "grant-race",
+    );
+    const sameKey = randomUUID();
+    const confirmations = await Promise.all([
+      admin.confirmGrant(
+        preview.id,
+        preview.payloadHash,
+        sameKey,
+        adminId,
+        "grant-race",
+      ),
+      admin.confirmGrant(
+        preview.id,
+        preview.payloadHash,
+        sameKey,
+        adminId,
+        "grant-race",
+      ),
+    ]);
+    expect(
+      new Set(confirmations.map((result) => result.transactionId)).size,
+    ).toBe(1);
+    expect(
+      await db.auditEvent.count({
+        where: { subjectId: target.id, action: "TEST_FUNDS_GRANT" },
+      }),
+    ).toBe(1);
+
+    const previous = process.env.DEMO_GRANT_DAILY_LIMIT;
+    process.env.DEMO_GRANT_DAILY_LIMIT = "500";
+    try {
+      const [left, right] = await Promise.all([
+        admin.previewGrant(
+          target.id,
+          "300",
+          "daily race left",
+          "R2-LEFT",
+          adminId,
+          "grant-race",
+        ),
+        admin.previewGrant(
+          target.id,
+          "300",
+          "daily race right",
+          "R2-RIGHT",
+          adminId,
+          "grant-race",
+        ),
+      ]);
+      const outcomes = await Promise.allSettled([
+        admin.confirmGrant(
+          left.id,
+          left.payloadHash,
+          randomUUID(),
+          adminId,
+          "grant-race",
+        ),
+        admin.confirmGrant(
+          right.id,
+          right.payloadHash,
+          randomUUID(),
+          adminId,
+          "grant-race",
+        ),
+      ]);
+      expect(
+        outcomes.filter((outcome) => outcome.status === "fulfilled"),
+      ).toHaveLength(1);
+      expect(
+        outcomes.find((outcome) => outcome.status === "rejected"),
+      ).toMatchObject({ reason: { code: "GRANT_DAILY_LIMIT" } });
+    } finally {
+      if (previous === undefined) delete process.env.DEMO_GRANT_DAILY_LIMIT;
+      else process.env.DEMO_GRANT_DAILY_LIMIT = previous;
+    }
+  });
 });

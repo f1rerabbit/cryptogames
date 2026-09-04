@@ -6,6 +6,15 @@ export type ProviderCallback = {
   type: ProviderEventType;
   scenario?: SettlementResult;
 };
+export function canonicalProviderPayload(value: ProviderCallback) {
+  return JSON.stringify([
+    value.eventId,
+    value.providerSessionId,
+    value.providerRoundId,
+    value.type,
+    value.scenario ?? null,
+  ]);
+}
 export interface GameProviderPort {
   createSessionId(): string;
   createRoundId(): string;

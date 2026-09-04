@@ -189,3 +189,42 @@ execute. Do not merge on the basis of this local environment alone.
 On a Docker-capable runner: `docker compose down -v --remove-orphans && docker compose build
 --no-cache`, then migrate/seed/up, run `pnpm quality`, capture all four viewport screenshots,
 and send the resulting commit to MASTER-02 Critic Round 2.
+
+## MASTER-02 Fix Loop Round 2 (2026-09-03)
+
+Round 2 moves provider replay claiming, wager/session validation, provider ordering, event
+persistence, settlement/refund ledger posts, state transitions and audit into one retried
+serializable transaction. Canonical callback payloads are HMAC-authenticated and concurrent
+same-event delivery is idempotent while changed payloads conflict. Generic correction is now
+limited to test-fund/admin adjustment transactions. Grant confirmation binds the ledger
+idempotency record to preview identity and payload and replays an executed preview even after
+its expiry. Session cancellation locks the session and only permits `ACTIVE -> CANCELLED`
+without an accepted wager. Last-admin removal is serialized with a database advisory lock.
+
+The admin UI now provides connected correction, provider simulation, audit filter, role and
+grant-limit/error workflows. The player wager flow polls its ownership-scoped API until the
+server/admin-controlled provider resolves it, then refreshes wallet, transactions and session
+state. Playwright now starts the real API and includes an unmocked browser/API/PostgreSQL
+vertical slice; mocked surface tests remain classified only as surface tests.
+
+Focused PostgreSQL coverage was added for callback replay/conflict/COMMIT concurrency and
+atomic rollback, freeze-after-reserve, grant confirmation/expiry/daily-limit concurrency,
+correction restrictions/replay, last-admin concurrency, and session terminal states. No schema
+migration was required in this round.
+
+Gate results for this round are recorded in the final handoff for the commit. Local PostgreSQL,
+Docker and Chromium availability must not be inferred from the implementation itself.
+
+### Round 2 local gate result
+
+- PASS: frozen install, Prisma generation, schema validation with an explicit disposable
+  PostgreSQL URL, format, lint, strict typecheck, all 23 unit tests, API smoke, production
+  builds, and `git diff --check`.
+- BLOCKED: PostgreSQL integration tests because `TEST_DATABASE_URL` is not configured locally.
+- BLOCKED: Playwright real/surface/responsive/axe execution because the API cannot initialize:
+  no PostgreSQL server is reachable at `127.0.0.1:5432` (Prisma P1001). This also blocks fresh
+  screenshots; no E2E or visual PASS is claimed.
+- The first bare Prisma validation attempt was blocked because `DATABASE_URL` was absent; the
+  same schema validation passed when supplied the documented disposable local URL. The first
+  format check found the newly added integration test unformatted; it was formatted and the
+  complete format check then passed. The implementation was not weakened to bypass either gate.

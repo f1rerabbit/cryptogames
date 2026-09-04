@@ -1,6 +1,10 @@
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { Injectable } from "@nestjs/common";
-import type { GameProviderPort, ProviderCallback } from "./provider.port.js";
+import {
+  canonicalProviderPayload,
+  type GameProviderPort,
+  type ProviderCallback,
+} from "./provider.port.js";
 @Injectable()
 export class DemoProviderAdapter implements GameProviderPort {
   createSessionId() {
@@ -11,7 +15,7 @@ export class DemoProviderAdapter implements GameProviderPort {
   }
   sign(value: ProviderCallback) {
     return createHmac("sha256", this.secret())
-      .update(this.payload(value))
+      .update(canonicalProviderPayload(value))
       .digest("hex");
   }
   verify(value: ProviderCallback, signature: string) {
@@ -20,15 +24,6 @@ export class DemoProviderAdapter implements GameProviderPort {
       signature.length === expected.length &&
       timingSafeEqual(Buffer.from(signature), Buffer.from(expected))
     );
-  }
-  private payload(v: ProviderCallback) {
-    return JSON.stringify([
-      v.eventId,
-      v.providerSessionId,
-      v.providerRoundId,
-      v.type,
-      v.scenario ?? null,
-    ]);
   }
   private secret() {
     const value =

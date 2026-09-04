@@ -5,6 +5,7 @@ import {
   EntryDirection,
   GameSessionStatus,
   PlayerStatus,
+  Prisma,
   SettlementResult,
   WagerStatus,
 } from "@cg/db";
@@ -93,7 +94,8 @@ export class GamesService {
     return result;
   }
   async cancelSession(userId: string, id: string, correlationId: string) {
-    return this.db.$transaction(async (tx) => {
+    return runSerializableWithRetry(this.db, async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "GameSession" WHERE "id"=${id}::uuid FOR UPDATE`;
       const session = await tx.gameSession.findFirst({
         where: { id, userId },
         include: { wagers: true },
@@ -103,6 +105,12 @@ export class GamesService {
           "SESSION_NOT_FOUND",
           "Session not found",
           404,
+        );
+      if (session.status !== GameSessionStatus.ACTIVE)
+        throw new ApplicationError(
+          "SESSION_NOT_ACTIVE",
+          "Only an active session can be cancelled",
+          409,
         );
       if (session.wagers.some((wager) => wager.status === WagerStatus.ACCEPTED))
         throw new ApplicationError(
@@ -232,148 +240,141 @@ export class GamesService {
     actorId: string,
     correlationId: string,
     scenario?: SettlementResult,
-    providerEvent?: {
-      eventId: string;
-      sessionId: string;
-      type: "SETTLE" | "REFUND";
-      payloadHash: string;
-    },
   ) {
     return runSerializableWithRetry(this.db, async (tx) => {
       await tx.$queryRaw`SELECT "id" FROM "GameWager" WHERE "id"=${wagerId}::uuid FOR UPDATE`;
-      const wager = await tx.gameWager.findUnique({ where: { id: wagerId } });
-      if (!wager)
-        throw new ApplicationError("WAGER_NOT_FOUND", "Wager not found", 404);
-      if (
-        wager.status === WagerStatus.SETTLED ||
-        wager.status === WagerStatus.REFUNDED
-      ) {
-        if (wager.settlementKey === key) return this.wagerView(wager);
-        throw new ApplicationError(
-          "WAGER_ALREADY_SETTLED",
-          "Wager is already settled",
-          409,
-        );
-      }
-      const result = scenario ?? SettlementResult.LOSS;
-      const payout = payoutFor(result, wager.stake);
-      const escrow = await tx.ledgerAccount.findFirstOrThrow({
-        where: {
-          userId: null,
-          assetCode: "TSC",
-          kind: AccountKind.GAME_ESCROW,
-        },
-      });
-      const treasury = await tx.ledgerAccount.findFirstOrThrow({
-        where: {
-          userId: null,
-          assetCode: "TSC",
-          kind: AccountKind.PLATFORM_TREASURY,
-        },
-      });
-      const player = await tx.ledgerAccount.findUniqueOrThrow({
-        where: {
-          userId_assetCode_kind: {
-            userId: wager.userId,
-            assetCode: "TSC",
-            kind: AccountKind.PLAYER_AVAILABLE,
-          },
-        },
-      });
-      const entries =
-        result === SettlementResult.REFUND
-          ? [
-              {
-                accountId: escrow.id,
-                direction: EntryDirection.DEBIT,
-                amount: wager.stake,
-              },
-              {
-                accountId: player.id,
-                direction: EntryDirection.CREDIT,
-                amount: wager.stake,
-              },
-            ]
-          : [
-              {
-                accountId: escrow.id,
-                direction: EntryDirection.DEBIT,
-                amount: wager.stake,
-              },
-              {
-                accountId: treasury.id,
-                direction: EntryDirection.CREDIT,
-                amount: wager.stake,
-              },
-              ...(payout > 0n
-                ? [
-                    {
-                      accountId: treasury.id,
-                      direction: EntryDirection.DEBIT,
-                      amount: payout,
-                    },
-                    {
-                      accountId: player.id,
-                      direction: EntryDirection.CREDIT,
-                      amount: payout,
-                    },
-                  ]
-                : []),
-            ];
-      const ledgerTx = await this.ledger.postWithin(tx, {
-        scope: "settlement",
-        idempotencyKey: key,
-        type:
-          result === SettlementResult.REFUND
-            ? "GAME_REFUND"
-            : "GAME_SETTLEMENT",
+      return this.settleWithin(
+        tx,
+        wagerId,
+        key,
         actorId,
-        referenceId: wager.id,
         correlationId,
-        entries,
-      });
-      const updated = await tx.gameWager.update({
-        where: { id: wager.id },
-        data: {
-          status:
-            result === SettlementResult.REFUND
-              ? WagerStatus.REFUNDED
-              : WagerStatus.SETTLED,
-          result,
-          payout,
-          settledAt: new Date(),
-          settlementKey: key,
-          settlementLedgerTransactionId: ledgerTx.id,
-        },
-      });
-      await tx.auditEvent.create({
-        data: {
-          actorId,
-          subjectId: wager.id,
-          action: "WAGER_SETTLE",
-          outcome: "SUCCESS",
-          correlationId,
-          metadata: { result, payout: payout.toString() },
-        },
-      });
-      if (providerEvent) {
-        await tx.providerEvent.create({
-          data: {
-            ...providerEvent,
-            wagerId: wager.id,
-            scenario: result,
-          },
-        });
-        await tx.gameSession.update({
-          where: { id: wager.sessionId },
-          data: {
-            status: GameSessionStatus.COMPLETED,
-            completedAt: new Date(),
-          },
-        });
-      }
-      return this.wagerView(updated);
+        scenario,
+      );
     });
+  }
+  async settleWithin(
+    tx: Prisma.TransactionClient,
+    wagerId: string,
+    key: string,
+    actorId: string,
+    correlationId: string,
+    scenario?: SettlementResult,
+  ) {
+    const wager = await tx.gameWager.findUnique({ where: { id: wagerId } });
+    if (!wager)
+      throw new ApplicationError("WAGER_NOT_FOUND", "Wager not found", 404);
+    if (
+      wager.status === WagerStatus.SETTLED ||
+      wager.status === WagerStatus.REFUNDED
+    ) {
+      if (wager.settlementKey === key) return this.wagerView(wager);
+      throw new ApplicationError(
+        "WAGER_ALREADY_SETTLED",
+        "Wager is already settled",
+        409,
+      );
+    }
+    const result = scenario ?? SettlementResult.LOSS;
+    const payout = payoutFor(result, wager.stake);
+    const escrow = await tx.ledgerAccount.findFirstOrThrow({
+      where: {
+        userId: null,
+        assetCode: "TSC",
+        kind: AccountKind.GAME_ESCROW,
+      },
+    });
+    const treasury = await tx.ledgerAccount.findFirstOrThrow({
+      where: {
+        userId: null,
+        assetCode: "TSC",
+        kind: AccountKind.PLATFORM_TREASURY,
+      },
+    });
+    const player = await tx.ledgerAccount.findUniqueOrThrow({
+      where: {
+        userId_assetCode_kind: {
+          userId: wager.userId,
+          assetCode: "TSC",
+          kind: AccountKind.PLAYER_AVAILABLE,
+        },
+      },
+    });
+    const entries =
+      result === SettlementResult.REFUND
+        ? [
+            {
+              accountId: escrow.id,
+              direction: EntryDirection.DEBIT,
+              amount: wager.stake,
+            },
+            {
+              accountId: player.id,
+              direction: EntryDirection.CREDIT,
+              amount: wager.stake,
+            },
+          ]
+        : [
+            {
+              accountId: escrow.id,
+              direction: EntryDirection.DEBIT,
+              amount: wager.stake,
+            },
+            {
+              accountId: treasury.id,
+              direction: EntryDirection.CREDIT,
+              amount: wager.stake,
+            },
+            ...(payout > 0n
+              ? [
+                  {
+                    accountId: treasury.id,
+                    direction: EntryDirection.DEBIT,
+                    amount: payout,
+                  },
+                  {
+                    accountId: player.id,
+                    direction: EntryDirection.CREDIT,
+                    amount: payout,
+                  },
+                ]
+              : []),
+          ];
+    const ledgerTx = await this.ledger.postWithin(tx, {
+      scope: "settlement",
+      idempotencyKey: key,
+      type:
+        result === SettlementResult.REFUND ? "GAME_REFUND" : "GAME_SETTLEMENT",
+      actorId,
+      referenceId: wager.id,
+      correlationId,
+      entries,
+    });
+    const updated = await tx.gameWager.update({
+      where: { id: wager.id },
+      data: {
+        status:
+          result === SettlementResult.REFUND
+            ? WagerStatus.REFUNDED
+            : WagerStatus.SETTLED,
+        result,
+        payout,
+        settledAt: new Date(),
+        settlementKey: key,
+        settlementLedgerTransactionId: ledgerTx.id,
+      },
+    });
+    await tx.auditEvent.create({
+      data: {
+        actorId,
+        subjectId: wager.id,
+        action: "WAGER_SETTLE",
+        outcome: "SUCCESS",
+        correlationId,
+        metadata: { result, payout: payout.toString() },
+      },
+    });
+    return this.wagerView(updated);
   }
   private assertActive(status?: PlayerStatus) {
     if (status !== PlayerStatus.ACTIVE)

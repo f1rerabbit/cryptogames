@@ -89,6 +89,7 @@ export function Faucet() {
       });
       setMessage(`Начислено ${result.amount} TSC.`);
       await refresh();
+      window.dispatchEvent(new Event("cg:player-refresh"));
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Ошибка");
     }
@@ -112,14 +113,43 @@ export function DemoWager({ slug }: { slug: string }) {
         body: "{}",
       })) as { id?: string };
       if (!session.id) throw new Error("Сессия не создана");
-      await call(`/game-sessions/${session.id}/wagers`, {
+      const wager = (await call(`/game-sessions/${session.id}/wagers`, {
         method: "POST",
         body: JSON.stringify({
           stake: "100",
           idempotencyKey: crypto.randomUUID(),
         }),
-      });
-      setMessage("Ставка 100 TSC принята и перемещена в game escrow.");
+      })) as { id?: string; status?: string };
+      setMessage(
+        `Ставка 100 TSC зарезервирована. Wager ${wager.id ?? ""}: ожидает server provider.`,
+      );
+      window.dispatchEvent(new Event("cg:player-refresh"));
+      for (let attempt = 0; attempt < 60; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        const current = (await call(`/me/game-sessions/${session.id}`)) as {
+          status?: string;
+          wagers?: Array<{
+            id: string;
+            status: string;
+            payout?: string;
+            settlementResult?: string;
+          }>;
+        };
+        const resolved = current.wagers?.find((item) => item.id === wager.id);
+        if (
+          resolved &&
+          ["SETTLED", "REFUNDED", "REJECTED"].includes(resolved.status)
+        ) {
+          setMessage(
+            `${resolved.settlementResult ?? resolved.status}: payout ${resolved.payout ?? "0"} TSC. Session ${current.status}.`,
+          );
+          window.dispatchEvent(new Event("cg:player-refresh"));
+          return;
+        }
+      }
+      setMessage(
+        "Ставка ожидает действия серверного DEMO provider. История обновится после settlement.",
+      );
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Ошибка");
     }
@@ -138,23 +168,27 @@ export function TransactionHistory() {
   >([]);
   const [message, setMessage] = useState("Загрузка…");
   useEffect(() => {
-    void call("/me/wallet/transactions")
-      .then((data) => {
-        const rows =
-          (
-            data as {
-              items?: Array<{
-                id: string;
-                category: string;
-                amount: string;
-                timestamp: string;
-              }>;
-            }
-          ).items ?? [];
-        setItems(rows);
-        setMessage(rows.length ? "" : "Операций пока нет.");
-      })
-      .catch((e) => setMessage(e instanceof Error ? e.message : "Ошибка"));
+    const load = () =>
+      void call("/me/wallet/transactions")
+        .then((data) => {
+          const rows =
+            (
+              data as {
+                items?: Array<{
+                  id: string;
+                  category: string;
+                  amount: string;
+                  timestamp: string;
+                }>;
+              }
+            ).items ?? [];
+          setItems(rows);
+          setMessage(rows.length ? "" : "Операций пока нет.");
+        })
+        .catch((e) => setMessage(e instanceof Error ? e.message : "Ошибка"));
+    load();
+    window.addEventListener("cg:player-refresh", load);
+    return () => window.removeEventListener("cg:player-refresh", load);
   }, []);
   return (
     <div className="table-wrap">
@@ -187,9 +221,13 @@ export function TransactionHistory() {
 export function SessionHistory() {
   const [message, setMessage] = useState("Загрузка…");
   useEffect(() => {
-    void call("/me/game-sessions")
-      .then((data) => setMessage(JSON.stringify(data, null, 2)))
-      .catch((e) => setMessage(e instanceof Error ? e.message : "Ошибка"));
+    const load = () =>
+      void call("/me/game-sessions")
+        .then((data) => setMessage(JSON.stringify(data, null, 2)))
+        .catch((e) => setMessage(e instanceof Error ? e.message : "Ошибка"));
+    load();
+    window.addEventListener("cg:player-refresh", load);
+    return () => window.removeEventListener("cg:player-refresh", load);
   }, []);
   return <pre role="status">{message}</pre>;
 }

@@ -1,12 +1,6 @@
 import { Inject, Injectable } from "@nestjs/common";
 import { createHash } from "node:crypto";
-import {
-  AccountKind,
-  EntryDirection,
-  PlayerStatus,
-  Prisma,
-  RoleName,
-} from "@cg/db";
+import { AccountKind, EntryDirection, PlayerStatus, RoleName } from "@cg/db";
 import { ApplicationError } from "../common/application-error.js";
 import { DatabaseService } from "../database/database.service.js";
 import { LedgerService } from "../ledger/ledger.service.js";
@@ -137,18 +131,18 @@ export class AdminService {
         );
       if (preview.payloadHash !== previewHash)
         throw financialError.idempotency();
-      if (preview.expiresAt <= new Date())
-        throw new ApplicationError(
-          "GRANT_PREVIEW_EXPIRED",
-          "Grant preview expired",
-          409,
-        );
       if (preview.transactionId)
         return {
           transactionId: preview.transactionId,
           amount: preview.amount.toString(),
           duplicate: true,
         };
+      if (preview.expiresAt <= new Date())
+        throw new ApplicationError(
+          "GRANT_PREVIEW_EXPIRED",
+          "Grant preview expired",
+          409,
+        );
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${preview.targetId}))`;
       const start = new Date();
       start.setUTCHours(0, 0, 0, 0);
@@ -186,7 +180,7 @@ export class AdminService {
         idempotencyKey: key,
         type: "TEST_FUNDS_GRANT",
         actorId,
-        referenceId: preview.ticket,
+        referenceId: `${preview.id}:${preview.payloadHash}:${preview.ticket}`,
         correlationId,
         entries: [
           {
@@ -250,6 +244,12 @@ export class AdminService {
           "Transaction not found",
           404,
         );
+      if (!["TEST_FUNDS_GRANT", "ADMIN_ADJUSTMENT"].includes(original.type))
+        throw new ApplicationError(
+          "TRANSACTION_NOT_CORRECTABLE",
+          "Transaction requires its domain-specific correction workflow",
+          409,
+        );
       if (original.compensatedBy.length && !existing)
         throw new ApplicationError(
           "TRANSACTION_ALREADY_CORRECTED",
@@ -261,7 +261,7 @@ export class AdminService {
         idempotencyKey: key,
         type: `CORRECT_${original.type}`,
         actorId,
-        referenceId: ticket,
+        referenceId: `${original.id}:${ticket}:${createHash("sha256").update(reason).digest("hex")}`,
         compensatesId: original.id,
         correlationId,
         entries: original.entries.map((entry) => ({
@@ -320,6 +320,10 @@ export class AdminService {
       ),
       asset: "TSC",
       playerLiability: liability.toString(),
+      limits: {
+        perGrant: process.env.DEMO_GRANT_LIMIT ?? "1000000",
+        daily: process.env.DEMO_GRANT_DAILY_LIMIT ?? "5000000",
+      },
       demo: true,
     };
   }
@@ -330,47 +334,45 @@ export class AdminService {
     actorId: string,
     correlationId: string,
   ) {
-    return this.db.$transaction(
-      async (tx) => {
-        const role = await tx.role.findUniqueOrThrow({
-          where: { name: roleName },
+    return runSerializableWithRetry(this.db, async (tx) => {
+      if (!add && roleName === RoleName.ADMIN)
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('cg:last-admin'))`;
+      const role = await tx.role.findUniqueOrThrow({
+        where: { name: roleName },
+      });
+      if (!add && roleName === RoleName.ADMIN) {
+        const admins = await tx.userRole.count({
+          where: { roleId: role.id },
         });
-        if (!add && roleName === RoleName.ADMIN) {
-          const admins = await tx.userRole.count({
-            where: { roleId: role.id },
-          });
-          const target = await tx.userRole.findUnique({
-            where: { userId_roleId: { userId, roleId: role.id } },
-          });
-          if (target && admins <= 1)
-            throw new ApplicationError(
-              "LAST_SUPER_ADMIN",
-              "The final admin role cannot be removed",
-              409,
-            );
-        }
-        if (add)
-          await tx.userRole.upsert({
-            where: { userId_roleId: { userId, roleId: role.id } },
-            update: {},
-            create: { userId, roleId: role.id },
-          });
-        else
-          await tx.userRole.deleteMany({ where: { userId, roleId: role.id } });
-        await tx.auditEvent.create({
-          data: {
-            actorId,
-            subjectId: userId,
-            action: add ? "ROLE_GRANT" : "ROLE_REVOKE",
-            outcome: "SUCCESS",
-            correlationId,
-            metadata: { role: roleName },
-          },
+        const target = await tx.userRole.findUnique({
+          where: { userId_roleId: { userId, roleId: role.id } },
         });
-        return { userId, role: roleName, assigned: add };
-      },
-      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
-    );
+        if (target && admins <= 1)
+          throw new ApplicationError(
+            "LAST_ADMIN",
+            "The final admin role cannot be removed",
+            409,
+          );
+      }
+      if (add)
+        await tx.userRole.upsert({
+          where: { userId_roleId: { userId, roleId: role.id } },
+          update: {},
+          create: { userId, roleId: role.id },
+        });
+      else await tx.userRole.deleteMany({ where: { userId, roleId: role.id } });
+      await tx.auditEvent.create({
+        data: {
+          actorId,
+          subjectId: userId,
+          action: add ? "ROLE_GRANT" : "ROLE_REVOKE",
+          outcome: "SUCCESS",
+          correlationId,
+          metadata: { role: roleName },
+        },
+      });
+      return { userId, role: roleName, assigned: add };
+    });
   }
   players() {
     return this.db.user.findMany({
@@ -464,15 +466,39 @@ export class AdminService {
       take: 100,
     });
   }
-  audit(filters: { action?: string; actorId?: string; outcome?: string } = {}) {
+  audit(
+    filters: {
+      action?: string;
+      actorId?: string;
+      subjectId?: string;
+      outcome?: string;
+      correlationId?: string;
+      from?: string;
+      to?: string;
+      cursor?: string;
+    } = {},
+  ) {
     return this.db.auditEvent.findMany({
       where: {
         ...(filters.action ? { action: filters.action } : {}),
         ...(filters.actorId ? { actorId: filters.actorId } : {}),
+        ...(filters.subjectId ? { subjectId: filters.subjectId } : {}),
         ...(filters.outcome ? { outcome: filters.outcome } : {}),
+        ...(filters.correlationId
+          ? { correlationId: filters.correlationId }
+          : {}),
+        ...(filters.from || filters.to
+          ? {
+              createdAt: {
+                ...(filters.from ? { gte: new Date(filters.from) } : {}),
+                ...(filters.to ? { lte: new Date(filters.to) } : {}),
+              },
+            }
+          : {}),
       },
       orderBy: { createdAt: "desc" },
-      take: 100,
+      take: 51,
+      ...(filters.cursor ? { cursor: { id: filters.cursor }, skip: 1 } : {}),
     });
   }
   sessions() {

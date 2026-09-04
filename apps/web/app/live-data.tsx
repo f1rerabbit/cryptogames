@@ -19,9 +19,13 @@ type Game = {
 export function LiveBalance() {
   const [state, setState] = useState("Загрузка…");
   useEffect(() => {
-    void get<{ available: string }>("/me/wallet")
-      .then((x) => setState(`${x.available} TSC`))
-      .catch((e) => setState(e instanceof Error ? e.message : "Ошибка"));
+    const load = () =>
+      void get<{ available: string }>("/me/wallet")
+        .then((x) => setState(`${x.available} TSC`))
+        .catch((e) => setState(e instanceof Error ? e.message : "Ошибка"));
+    load();
+    window.addEventListener("cg:player-refresh", load);
+    return () => window.removeEventListener("cg:player-refresh", load);
   }, []);
   return <strong className="balance">{state}</strong>;
 }

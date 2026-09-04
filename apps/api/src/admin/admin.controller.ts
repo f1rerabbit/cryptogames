@@ -97,7 +97,12 @@ export class AdminController {
     const query = request.query as {
       action?: string;
       actorId?: string;
+      subjectId?: string;
       outcome?: string;
+      correlationId?: string;
+      from?: string;
+      to?: string;
+      cursor?: string;
     };
     return this.s.audit(query);
   }

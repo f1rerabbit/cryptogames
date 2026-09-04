@@ -170,7 +170,7 @@ describe.skipIf(!url)("MASTER-02 HTTP contracts", () => {
       })
       .expect(201);
     expect(preview.body.entries).toHaveLength(2);
-    await admin
+    const grant = await admin
       .post(`/v1/admin/grants/${preview.body.id}/confirm`)
       .send({
         previewHash: preview.body.payloadHash,
@@ -187,6 +187,29 @@ describe.skipIf(!url)("MASTER-02 HTTP contracts", () => {
     expect(
       await db.auditEvent.count({ where: { action: "TEST_FUNDS_GRANT" } }),
     ).toBe(1);
+    const correction = await admin
+      .post("/v1/admin/ledger/corrections")
+      .send({
+        originalTransactionId: grant.body.transactionId,
+        reason: "HTTP correction",
+        ticket: "HTTP-2",
+        idempotencyKey: "correction-http",
+      })
+      .expect(201);
+    expect(correction.body.compensatesId).toBe(grant.body.transactionId);
+    const wagerTransaction = await db.ledgerTransaction.findFirstOrThrow({
+      where: { type: "GAME_WAGER" },
+    });
+    const forbidden = await admin
+      .post("/v1/admin/ledger/corrections")
+      .send({
+        originalTransactionId: wagerTransaction.id,
+        reason: "Unsafe correction",
+        ticket: "HTTP-3",
+        idempotencyKey: "correction-http-wager",
+      })
+      .expect(409);
+    expect(forbidden.body.error.code).toBe("TRANSACTION_NOT_CORRECTABLE");
     await admin
       .patch(`/v1/admin/games/${gameId}`)
       .send({ active: false, minBet: "200", maxBet: "2000", sortOrder: 99 })

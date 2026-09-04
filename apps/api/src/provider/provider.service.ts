@@ -1,11 +1,19 @@
 import { createHash, randomUUID } from "node:crypto";
 import { Inject, Injectable } from "@nestjs/common";
-import { ProviderEventType, WagerStatus } from "@cg/db";
+import {
+  GameSessionStatus,
+  ProviderEventType,
+  SettlementResult,
+  WagerStatus,
+} from "@cg/db";
 import { ApplicationError } from "../common/application-error.js";
 import { DatabaseService } from "../database/database.service.js";
+import { runSerializableWithRetry } from "../database/serializable.js";
+import { financialError } from "../common/domain-error.js";
 import { GamesService } from "../games/games.service.js";
 import {
   GAME_PROVIDER,
+  canonicalProviderPayload,
   type GameProviderPort,
   type ProviderCallback,
 } from "./provider.port.js";
@@ -107,95 +115,156 @@ export class ProviderService {
         "Invalid provider authentication",
         401,
       );
+    if (
+      (callback.type === ProviderEventType.COMMIT && callback.scenario) ||
+      (callback.type === ProviderEventType.REFUND &&
+        callback.scenario !== SettlementResult.REFUND) ||
+      (callback.type === ProviderEventType.SETTLE &&
+        (!callback.scenario || callback.scenario === SettlementResult.REFUND))
+    )
+      throw new ApplicationError(
+        "PROVIDER_PAYLOAD_INVALID",
+        "Provider event type and scenario do not match",
+        422,
+      );
     const hash = createHash("sha256")
-      .update(JSON.stringify(callback))
+      .update(canonicalProviderPayload(callback))
       .digest("hex");
-    const existing = await this.db.providerEvent.findUnique({
-      where: { eventId: callback.eventId },
-    });
-    if (existing) {
-      if (existing.payloadHash !== hash)
+    return runSerializableWithRetry(this.db, async (tx) => {
+      const existing = await tx.providerEvent.findUnique({
+        where: { eventId: callback.eventId },
+      });
+      if (existing) {
+        if (existing.payloadHash !== hash) throw financialError.idempotency();
+        const wager = await tx.gameWager.findUniqueOrThrow({
+          where: { id: existing.wagerId },
+        });
+        return {
+          duplicate: true,
+          eventId: existing.eventId,
+          wager: this.resultView(wager),
+        };
+      }
+      const located = await tx.gameWager.findUnique({
+        where: { providerRoundId: callback.providerRoundId },
+      });
+      if (!located)
         throw new ApplicationError(
-          "IDEMPOTENCY_CONFLICT",
-          "Provider event payload conflicts",
+          "WAGER_NOT_FOUND",
+          "Provider wager not found",
+          404,
+        );
+      await tx.$queryRaw`SELECT "id" FROM "GameWager" WHERE "id"=${located.id}::uuid FOR UPDATE`;
+      const wager = await tx.gameWager.findUniqueOrThrow({
+        where: { id: located.id },
+        include: { session: true },
+      });
+      if (wager.session.providerSessionId !== callback.providerSessionId)
+        throw new ApplicationError(
+          "PROVIDER_SESSION_MISMATCH",
+          "Provider session does not match wager",
           409,
         );
-      return { duplicate: true, eventId: existing.eventId };
-    }
-    const wager = await this.db.gameWager.findUnique({
-      where: { providerRoundId: callback.providerRoundId },
-      include: { session: true },
-    });
-    if (!wager)
-      throw new ApplicationError(
-        "WAGER_NOT_FOUND",
-        "Provider wager not found",
-        404,
-      );
-    if (wager.session.providerSessionId !== callback.providerSessionId)
-      throw new ApplicationError(
-        "PROVIDER_SESSION_MISMATCH",
-        "Provider session does not match wager",
-        409,
-      );
-    if (callback.type === ProviderEventType.COMMIT) {
-      if (wager.status !== WagerStatus.ACCEPTED)
-        throw new ApplicationError(
-          "PROVIDER_EVENT_OUT_OF_ORDER",
-          "Commit is out of order",
-          409,
-        );
-      if (
-        await this.db.providerEvent.findFirst({
+      if (callback.type === ProviderEventType.COMMIT) {
+        if (wager.status !== WagerStatus.ACCEPTED)
+          throw new ApplicationError(
+            "PROVIDER_EVENT_OUT_OF_ORDER",
+            "Commit is out of order",
+            409,
+          );
+        const priorCommit = await tx.providerEvent.findFirst({
           where: { wagerId: wager.id, type: ProviderEventType.COMMIT },
-        })
+        });
+        if (priorCommit)
+          throw new ApplicationError(
+            "PROVIDER_EVENT_OUT_OF_ORDER",
+            "Wager is already committed",
+            409,
+          );
+        const event = await tx.providerEvent.create({
+          data: {
+            eventId: callback.eventId,
+            wagerId: wager.id,
+            sessionId: wager.sessionId,
+            type: callback.type,
+            payloadHash: hash,
+          },
+        });
+        await tx.auditEvent.create({
+          data: {
+            actorId,
+            subjectId: wager.id,
+            action: "PROVIDER_COMMIT",
+            outcome: "SUCCESS",
+            correlationId,
+            metadata: { eventId: event.eventId },
+          },
+        });
+        return {
+          duplicate: false,
+          eventId: event.eventId,
+          committed: true,
+          wager: this.resultView(wager),
+        };
+      }
+      if (
+        callback.type === ProviderEventType.SETTLE &&
+        !(await tx.providerEvent.findFirst({
+          where: { wagerId: wager.id, type: ProviderEventType.COMMIT },
+        }))
       )
         throw new ApplicationError(
           "PROVIDER_EVENT_OUT_OF_ORDER",
-          "Wager is already committed",
+          "Settlement requires commit",
           409,
         );
-      await this.db.providerEvent.create({
+      if (wager.status !== WagerStatus.ACCEPTED)
+        throw new ApplicationError(
+          "WAGER_ALREADY_SETTLED",
+          "Wager is already settled",
+          409,
+        );
+      const settled = await this.games.settleWithin(
+        tx,
+        wager.id,
+        callback.eventId,
+        actorId,
+        correlationId,
+        callback.scenario,
+      );
+      await tx.providerEvent.create({
         data: {
           eventId: callback.eventId,
           wagerId: wager.id,
           sessionId: wager.sessionId,
           type: callback.type,
+          scenario: callback.scenario ?? null,
           payloadHash: hash,
         },
       });
-      return { eventId: callback.eventId, committed: true };
-    }
-    if (
-      callback.type === ProviderEventType.SETTLE &&
-      !(await this.db.providerEvent.findFirst({
-        where: { wagerId: wager.id, type: ProviderEventType.COMMIT },
-      }))
-    )
-      throw new ApplicationError(
-        "PROVIDER_EVENT_OUT_OF_ORDER",
-        "Settlement requires commit",
-        409,
-      );
-    if (wager.status !== WagerStatus.ACCEPTED)
-      throw new ApplicationError(
-        "WAGER_ALREADY_SETTLED",
-        "Wager is already settled",
-        409,
-      );
-    const settled = await this.games.settle(
-      wager.id,
-      callback.eventId,
-      actorId,
-      correlationId,
-      callback.scenario,
-      {
+      await tx.gameSession.update({
+        where: { id: wager.sessionId },
+        data: { status: GameSessionStatus.COMPLETED, completedAt: new Date() },
+      });
+      return {
+        duplicate: false,
         eventId: callback.eventId,
-        sessionId: wager.sessionId,
-        type: callback.type,
-        payloadHash: hash,
-      },
-    );
-    return { eventId: callback.eventId, settled };
+        wager: settled,
+        settled,
+      };
+    });
+  }
+  private resultView(wager: {
+    id: string;
+    status: WagerStatus;
+    result: SettlementResult | null;
+    payout: bigint | null;
+  }) {
+    return {
+      id: wager.id,
+      status: wager.status,
+      result: wager.result,
+      payout: wager.payout?.toString() ?? null,
+    };
   }
 }

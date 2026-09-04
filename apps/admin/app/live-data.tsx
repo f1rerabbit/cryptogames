@@ -26,13 +26,17 @@ export function Resource({
   const [rows, setRows] = useState<unknown[]>([]),
     [state, setState] = useState("Загрузка…");
   useEffect(() => {
-    void api<unknown[] | Record<string, unknown>>(path)
-      .then((value) => {
-        const list = Array.isArray(value) ? value : [value];
-        setRows(list);
-        setState(list.length ? "" : "Нет данных");
-      })
-      .catch((e) => setState(e instanceof Error ? e.message : "Ошибка"));
+    const load = () =>
+      void api<unknown[] | Record<string, unknown>>(path)
+        .then((value) => {
+          const list = Array.isArray(value) ? value : [value];
+          setRows(list);
+          setState(list.length ? "" : "Нет данных");
+        })
+        .catch((e) => setState(e instanceof Error ? e.message : "Ошибка"));
+    load();
+    window.addEventListener("cg:admin-refresh", load);
+    return () => window.removeEventListener("cg:admin-refresh", load);
   }, [path]);
   return (
     <div className="table-wrap">
@@ -88,6 +92,63 @@ export function Dashboard() {
       <h2>Database / ledger metrics</h2>
       <pre>{data ? JSON.stringify(data, null, 2) : state}</pre>
     </section>
+  );
+}
+
+export function AuditExplorer() {
+  const [path, setPath] = useState("/admin/audit");
+  function filter(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const query = new URLSearchParams();
+    for (const key of [
+      "actorId",
+      "subjectId",
+      "action",
+      "outcome",
+      "correlationId",
+      "cursor",
+      "from",
+      "to",
+    ])
+      if (typeof data.get(key) === "string" && data.get(key))
+        query.set(key, data.get(key) as string);
+    setPath(`/admin/audit?${query.toString()}`);
+  }
+  return (
+    <>
+      <form className="card" onSubmit={filter}>
+        <h2>Audit filters</h2>
+        {(
+          [
+            "actorId",
+            "subjectId",
+            "action",
+            "outcome",
+            "correlationId",
+          ] as const
+        ).map((name) => (
+          <label className="field" key={name}>
+            {name}
+            <input name={name} />
+          </label>
+        ))}
+        <label className="field">
+          From
+          <input name="from" type="datetime-local" />
+        </label>
+        <label className="field">
+          To
+          <input name="to" type="datetime-local" />
+        </label>
+        <label className="field">
+          Next-page cursor
+          <input name="cursor" pattern="[0-9a-fA-F-]{36}" />
+        </label>
+        <button>Apply server filters</button>
+      </form>
+      <Resource path={path} />
+    </>
   );
 }
 export function GameManager() {
