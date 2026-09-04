@@ -1,0 +1,253 @@
+"use client";
+import { FormEvent, useEffect, useState } from "react";
+const API = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:3001/v1";
+async function call(path: string, options: RequestInit = {}) {
+  const response = await fetch(`${API}${path}`, {
+    ...options,
+    credentials: "include",
+    headers: { "content-type": "application/json" },
+  });
+  const body = (await response.json()) as {
+    token?: string;
+    error?: { message: string };
+    available?: string;
+    amount?: string;
+  };
+  if (!response.ok) throw new Error(body.error?.message ?? "Запрос отклонён");
+  return body;
+}
+export function AuthForm({ mode }: { mode: "login" | "register" }) {
+  const [message, setMessage] = useState("");
+  async function submit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const data = new FormData(e.currentTarget);
+    try {
+      if (mode === "register")
+        await call("/auth/register", {
+          method: "POST",
+          body: JSON.stringify({
+            email: data.get("email"),
+            password: data.get("password"),
+          }),
+        });
+      await call("/auth/login", {
+        method: "POST",
+        body: JSON.stringify({
+          email: data.get("email"),
+          password: data.get("password"),
+        }),
+      });
+      setMessage("Готово. Сессия защищена и сохранена в этом браузере.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Ошибка");
+    }
+  }
+  return (
+    <form onSubmit={(event) => void submit(event)}>
+      <label className="field">
+        Email
+        <input required type="email" name="email" autoComplete="email" />
+      </label>
+      <label className="field">
+        Пароль
+        <input
+          required
+          minLength={12}
+          type="password"
+          name="password"
+          autoComplete={mode === "login" ? "current-password" : "new-password"}
+        />
+      </label>
+      <button type="submit">
+        {mode === "login" ? "Войти" : "Создать аккаунт"}
+      </button>
+      <p role="status">{message}</p>
+    </form>
+  );
+}
+export function Faucet() {
+  const [message, setMessage] = useState(
+    "Сервер определяет фиксированную выдачу и cooldown.",
+  );
+  const [balance, setBalance] = useState("—");
+  async function refresh() {
+    try {
+      const wallet = await call("/me/wallet");
+      setBalance(wallet.available ?? "—");
+    } catch {
+      setBalance("войдите для просмотра");
+    }
+  }
+  useEffect(() => {
+    void refresh();
+  }, []);
+  async function claim() {
+    try {
+      const result = await call("/me/wallet/faucet", {
+        method: "POST",
+        body: JSON.stringify({ idempotencyKey: crypto.randomUUID() }),
+      });
+      setMessage(`Начислено ${result.amount} TSC.`);
+      await refresh();
+      window.dispatchEvent(new Event("cg:player-refresh"));
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Ошибка");
+    }
+  }
+  return (
+    <div>
+      <strong className="balance">{balance} TSC</strong>
+      <button onClick={() => void claim()}>Получить тестовые TSC</button>
+      <p role="status">{message}</p>
+    </div>
+  );
+}
+export function DemoWager({ slug }: { slug: string }) {
+  const [message, setMessage] = useState(
+    "Результат определяет серверный DEMO-симулятор.",
+  );
+  async function play() {
+    try {
+      const session = (await call(`/games/${slug}/sessions`, {
+        method: "POST",
+        body: "{}",
+      })) as { id?: string };
+      if (!session.id) throw new Error("Сессия не создана");
+      const wager = (await call(`/game-sessions/${session.id}/wagers`, {
+        method: "POST",
+        body: JSON.stringify({
+          stake: "100",
+          idempotencyKey: crypto.randomUUID(),
+        }),
+      })) as { id?: string; status?: string };
+      setMessage(
+        `Ставка 100 TSC зарезервирована. Wager ${wager.id ?? ""}: ожидает server provider.`,
+      );
+      window.dispatchEvent(new Event("cg:player-refresh"));
+      for (let attempt = 0; attempt < 60; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        const current = (await call(`/me/game-sessions/${session.id}`)) as {
+          status?: string;
+          wagers?: Array<{
+            id: string;
+            status: string;
+            payout?: string;
+            settlementResult?: string;
+          }>;
+        };
+        const resolved = current.wagers?.find((item) => item.id === wager.id);
+        if (
+          resolved &&
+          ["SETTLED", "REFUNDED", "REJECTED"].includes(resolved.status)
+        ) {
+          setMessage(
+            `${resolved.settlementResult ?? resolved.status}: payout ${resolved.payout ?? "0"} TSC. Session ${current.status}.`,
+          );
+          window.dispatchEvent(new Event("cg:player-refresh"));
+          return;
+        }
+      }
+      setMessage(
+        "Ставка ожидает действия серверного DEMO provider. История обновится после settlement.",
+      );
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Ошибка");
+    }
+  }
+  return (
+    <div>
+      <button onClick={() => void play()}>Запустить и поставить 100 TSC</button>
+      <p role="status">{message}</p>
+    </div>
+  );
+}
+
+export function TransactionHistory() {
+  const [items, setItems] = useState<
+    Array<{ id: string; category: string; amount: string; timestamp: string }>
+  >([]);
+  const [message, setMessage] = useState("Загрузка…");
+  useEffect(() => {
+    const load = () =>
+      void call("/me/wallet/transactions")
+        .then((data) => {
+          const rows =
+            (
+              data as {
+                items?: Array<{
+                  id: string;
+                  category: string;
+                  amount: string;
+                  timestamp: string;
+                }>;
+              }
+            ).items ?? [];
+          setItems(rows);
+          setMessage(rows.length ? "" : "Операций пока нет.");
+        })
+        .catch((e) => setMessage(e instanceof Error ? e.message : "Ошибка"));
+    load();
+    window.addEventListener("cg:player-refresh", load);
+    return () => window.removeEventListener("cg:player-refresh", load);
+  }, []);
+  return (
+    <div className="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Категория</th>
+            <th>Эффект</th>
+            <th>Дата</th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((item) => (
+            <tr key={item.id}>
+              <td>{item.category}</td>
+              <td>{item.amount} TSC</td>
+              <td>{new Date(item.timestamp).toLocaleString("ru")}</td>
+            </tr>
+          ))}
+          {!items.length && (
+            <tr>
+              <td colSpan={3}>{message}</td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+export function SessionHistory() {
+  const [message, setMessage] = useState("Загрузка…");
+  useEffect(() => {
+    const load = () =>
+      void call("/me/game-sessions")
+        .then((data) => setMessage(JSON.stringify(data, null, 2)))
+        .catch((e) => setMessage(e instanceof Error ? e.message : "Ошибка"));
+    load();
+    window.addEventListener("cg:player-refresh", load);
+    return () => window.removeEventListener("cg:player-refresh", load);
+  }, []);
+  return <pre role="status">{message}</pre>;
+}
+export function LogoutButton() {
+  const [message, setMessage] = useState("");
+  async function logout() {
+    try {
+      await fetch(`${API}/auth/logout`, {
+        method: "POST",
+        credentials: "include",
+      });
+      setMessage("Сессия отозвана.");
+    } catch {
+      setMessage("Не удалось завершить сессию.");
+    }
+  }
+  return (
+    <div>
+      <button onClick={() => void logout()}>Выйти</button>
+      <p role="status">{message}</p>
+    </div>
+  );
+}

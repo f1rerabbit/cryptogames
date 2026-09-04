@@ -7,9 +7,10 @@ import {
   Param,
   Post,
   Req,
+  Res,
 } from "@nestjs/common";
 import { ROLES } from "@cg/contracts";
-import type { Request } from "express";
+import type { Request, Response } from "express";
 import {
   AllowRoles,
   Public,
@@ -31,8 +32,20 @@ export class AuthController {
   @Public() @HttpCode(200) @Post("auth/login") login(
     @Body() body: CredentialsDto,
     @Req() req: AuthRequest,
+    @Res({ passthrough: true }) response: Response,
   ) {
-    return this.auth.login(body.email, body.password, req.correlationId);
+    return this.auth
+      .login(body.email, body.password, req.correlationId)
+      .then(({ token, session }) => {
+        response.cookie("cg_session", token, {
+          httpOnly: true,
+          sameSite: "lax",
+          secure: process.env.NODE_ENV === "production",
+          maxAge: 8 * 60 * 60 * 1000,
+          path: "/",
+        });
+        return { session };
+      });
   }
   @AllowRoles(...ROLES) @Get("me") me(@Req() req: AuthRequest) {
     return {
@@ -49,8 +62,14 @@ export class AuthController {
   }
   @AllowRoles(...ROLES) @HttpCode(204) @Post("auth/logout") async logout(
     @Req() req: AuthRequest,
+    @Res({ passthrough: true }) response: Response,
   ) {
     await this.auth.logout(req.user.id, req.user.token, req.correlationId);
+    response.clearCookie("cg_session", {
+      httpOnly: true,
+      sameSite: "lax",
+      path: "/",
+    });
   }
   @AllowRoles(...ROLES) @Post("me/security/sessions/:id/revoke") revoke(
     @Param() params: SessionIdDto,

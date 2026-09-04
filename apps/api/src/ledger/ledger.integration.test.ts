@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { AccountKind, EntryDirection } from "@cg/db";
 import { beforeAll, beforeEach, afterAll, describe, expect, it } from "vitest";
 import { DatabaseService } from "../database/database.service.js";
+import { FinancialError } from "../common/domain-error.js";
 import { LedgerError, LedgerService } from "./ledger.service.js";
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
@@ -103,9 +104,11 @@ describe.skipIf(!databaseUrl)("PostgreSQL ledger integration", () => {
   it("rejects idempotency collisions", async () => {
     const key = randomUUID();
     await debit(key, 10n);
-    await expect(debit(key, 11n)).rejects.toThrow(
-      "Idempotency key reused with different request",
+    const collision: unknown = await debit(key, 11n).catch(
+      (error: unknown) => error,
     );
+    expect(collision).toBeInstanceOf(FinancialError);
+    expect(collision).toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
   });
 
   it("serializes concurrent debits and prevents a negative balance", async () => {

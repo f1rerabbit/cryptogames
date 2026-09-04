@@ -20,3 +20,18 @@
 ## Главный safety gate
 
 Prompts 1–4 работают только с `TSC` без реальной стоимости. Bitcoin запрещён до Prompt 5. Prompt 6 никогда не должен автоматически деплоить mainnet или обращаться к приватным ключам.
+
+## MASTER-02 demo platform
+
+The player surface exposes persistent profiles, a ledger-derived TSC wallet, controlled
+demo faucet, catalog, game sessions and generic wagers. The admin surface provides Player
+360, append-only ledger/audit views, demo adjustments, account freeze controls, catalog
+operations and wager settlement. See `docs/architecture/API-MASTER-02.md` for routes.
+
+TSC (Test Satoshi Credit) is an integer-only test asset with no monetary value and no
+withdrawal path. There is no cryptocurrency, deposit, custody, key, signing, blockchain or
+payment-provider implementation.
+
+Development seed requires the safe placeholder variables documented in `.env.example`, is
+repeatable, and rejects `NODE_ENV=production`. Start the stack with `docker compose up`; use
+the configured demo emails and `DEMO_ACCOUNT_PASSWORD` rather than hard-coded credentials.

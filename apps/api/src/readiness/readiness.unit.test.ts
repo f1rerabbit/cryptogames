@@ -11,6 +11,7 @@ import { ReadinessService } from "./readiness.service.js";
 
 describe("readiness", () => {
   beforeEach(() => {
+    process.env.REDIS_URL = "redis://localhost:6379";
     vi.clearAllMocks();
     redis.connect.mockResolvedValue(undefined);
     redis.ping.mockResolvedValue("PONG");
